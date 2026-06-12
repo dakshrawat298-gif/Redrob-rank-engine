@@ -1,0 +1,25 @@
+[System Command: Enter PLAN MODE. DO NOT generate any application code yet. Your first objective is to establish a flawless architectural foundation for the Redrob "India Runs" Hackathon - Track 1 (Intelligent Candidate Discovery).]
+
+Context: We are building a "100x God-Level" Candidate Ranking System.
+Strict Constraints: 
+- Compute: CPU-only. Max 16GB RAM. 
+- Execution Time: Max 5 minutes wall-clock time. 
+- Network: NO external API calls (e.g., OpenAI, Claude) during the ranking step. 
+- Input: 100,000 synthetic candidate profiles in JSONL format (~465MB uncompressed).
+- Evaluation: NDCG@10, MAP, and manual Stage 4 code/reasoning review.
+
+Task: Generate the following 8 core project documentation files in detailed Markdown format. You must integrate the exact rules and logic required to beat the constraints.
+
+1. PRD.md (Product Requirements Document): Define the core objective, target metrics (NDCG@10), and the 3 core pillars: Deep Semantic Fit, Behavioral Signal Multipliers, and Zero-Hallucination Explainability.
+2. TechSpec.md: Outline a strict Two-Pass Pipeline. Pass 1: Fast local FAISS vector search on pre-computed embeddings using integer IDs. Pass 2: Lazy loading full JSON metadata for only the Top 1000 candidates to apply rule-based filters and AST templating.
+3. AppFlow.md: Map the data flow diagram (Data Streaming Ingestion -> Vectorization -> Honeypot Elimination -> Behavioral Multiplier Scoring -> AST Reasoning Generation -> Final 100-row CSV Output).
+4. Design.md: Define the exact schema and constraints of the final output `team_xxx.csv` (Columns: candidate_id, rank, score, reasoning) and the terminal logging interface for debugging.
+5. Schema.md: Document the input candidate data structure, focusing heavily on the 23 `redrob_signals` (e.g., recruiter_response_rate, notice_period_days) and the criteria for identifying "Honeypot" trap profiles.
+6. ImplementationPlan.md: Create a phase-by-phase timeline: Phase 1 (Pre-computation of Embeddings), Phase 2 (Hard Filter Logic & Scoring Math), Phase 3 (AST Templating Engine), Phase 4 (Local Sandbox 5-min execution testing).
+7. Tracker.md: Set up a Kanban board (To-Do, In Progress, Complete) with atomic tasks.
+8. Rules.md: Establish unbreakable system guardrails: 
+    - NEVER load the entire JSONL file into memory at once.
+    - NEVER hallucinate skills in the reasoning column.
+    - MUST aggressively penalize job hoppers and strictly consulting-only profiles as per JD biases.
+
+Wait for user review and explicit approval of these 8 files before writing a single line of executable Python code.
