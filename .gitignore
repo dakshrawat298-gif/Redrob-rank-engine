@@ -47,3 +47,18 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Redrob Rank Engine — generated data & artifacts (large, reproducible)
+engine/data/
+candidates.jsonl
+candidates.jsonl.gz
+*.faiss

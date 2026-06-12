@@ -1,0 +1,1 @@
+- [Embedding backend](embedding-backend.md) — use fastembed (ONNX/CPU), not sentence-transformers; root pyproject pins ST to the pytorch-cpu index so uv can't resolve it.

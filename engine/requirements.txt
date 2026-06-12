@@ -1,0 +1,6 @@
+# Redrob Rank Engine — Python dependencies (CPU-only)
+# Embeddings use fastembed (ONNX runtime, CPU, no PyTorch) for the
+# all-MiniLM-L6-v2 model. See engine/phase1_precompute.py.
+numpy
+faiss-cpu
+fastembed

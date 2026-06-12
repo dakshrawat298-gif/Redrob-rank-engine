@@ -14,11 +14,11 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 ## To-Do
 
 ### Phase 1 — Pre-computation
-- [ ] **P1-1** Stream JSONL, build `offsets.idx` (byte offset/len per `candidate_id`) without full load.
-- [ ] **P1-2** Reconcile real input schema vs `Schema.md` (fields + 23 signals); update doc if needed.
-- [ ] **P1-3** Build per-candidate embedding text from narrative fields.
-- [ ] **P1-4** Finalize embedding model; compute + L2-normalize → `embeddings.f32`; write `id_map.npy`.
-- [ ] **P1-5** Build + serialize `faiss.index` (`IndexFlatIP`); write artifact manifest/checksums.
+- [x] **P1-1** Stream JSONL (binary, line-by-line), build `byte_offset_index.json` per `candidate_id` without full load.
+- [ ] **P1-2** Reconcile real input schema vs `Schema.md` (fields + 23 signals); update doc if needed. _(pending real dataset)_
+- [x] **P1-3** Build per-candidate embedding text from `current_title` + `skills` + `experience_summary`.
+- [x] **P1-4** Embed via fastembed (all-MiniLM-L6-v2, 384-dim, ONNX/CPU) + L2-normalize; write `id_map.json`.
+- [x] **P1-5** Build + serialize `candidate_embeddings.faiss` (`IndexFlatIP`); write `manifest.json`.
 
 ### Phase 2 — Filters & Scoring
 - [ ] **P2-1** Lazy record loader (seek → read → parse one record).
@@ -53,7 +53,8 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ## In Progress
 
-_(empty — populate as work starts; gated on doc approval per `PRD.md`)_
+- [~] **P1-2** Schema reconciliation — blocked until the real `candidates.jsonl(.gz)` arrives;
+  field names are isolated as constants (`TEXT_FIELDS`, `ID_FIELD`) for a one-line change.
 
 ---
 
