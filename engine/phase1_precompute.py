@@ -104,6 +104,8 @@ _MOCK_SKILLS = [
     "kubernetes", "docker", "aws", "gcp", "terraform", "spark", "airflow",
     "tensorflow", "pytorch", "react", "typescript", "graphql", "microservices",
 ]
+# AI-engineering skills used to seed the "title mismatch" honeypot in Phase 2.
+_MOCK_AI_SKILLS = ["RAG", "Pinecone", "LangChain", "vector databases", "LLM fine-tuning"]
 _MOCK_SUMMARY_BITS = [
     "Built and scaled fault-tolerant services handling millions of requests per day.",
     "Led the migration from a monolith to event-driven microservices.",
@@ -113,33 +115,86 @@ _MOCK_SUMMARY_BITS = [
     "Mentored engineers and drove the platform's reliability roadmap.",
     "Implemented CI/CD and infrastructure-as-code across the org.",
 ]
+# Company pools used by the consulting-lifer penalty and honeypot logic (Phase 2).
+_MOCK_CONSULTING = ["TCS", "Infosys", "Wipro", "Accenture", "Cognizant", "Capgemini"]
+_MOCK_PRODUCT = ["Google", "Microsoft", "Amazon", "Stripe", "Razorpay", "Flipkart",
+                 "Zomato", "Atlassian", "Databricks", "Uber"]
+
+
+def _mock_employment(rng: random.Random, companies: List[str]) -> List[dict]:
+    """Build an employment_history list with per-company tenure (years)."""
+    return [{"company": c, "tenure_years": rng.choice([1, 2, 3, 4, 5])}
+            for c in companies]
 
 
 def generate_mock_data(path: str, n: int = 100, seed: int = 42) -> None:
     """Write ``n`` fake JSONL candidate lines to ``path`` for local testing.
 
-    The records use the same field names the real dataset is expected to use
-    (``candidate_id``, ``current_title``, ``skills``, ``experience_summary``)
-    so the rest of the pipeline can be exercised before the real file arrives.
-    Deterministic given ``seed`` (R7).
+    Records use the same field names the real dataset is expected to use so the
+    whole pipeline can be exercised before the real file arrives. In addition to
+    the embedding fields (``current_title``, ``skills``, ``experience_summary``),
+    each record carries the metadata Phase 2 scores on: ``employment_history``,
+    ``total_experience_years``, ``current_company_age_years``,
+    ``skill_assessment_scores``, ``notice_period_days``, and engagement rates.
+
+    A deterministic mix of *archetypes* is generated (seeded, R7) so every Phase 2
+    honeypot and penalty branch is exercised: normal, consulting-lifer, job-hopper,
+    long-notice, and the three honeypots (timeline overlap, fake expert, title
+    mismatch).
     """
     rng = random.Random(seed)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    # Repeating archetype cycle guarantees several of each within n=100.
+    archetypes = (["normal"] * 5 + ["consulting_lifer", "job_hopper", "long_notice",
+                  "honeypot_overlap", "honeypot_fake_expert", "honeypot_title_mismatch"])
     with open(path, "w", encoding="utf-8") as f:
         for i in range(n):
+            archetype = archetypes[i % len(archetypes)]
             title = rng.choice(_MOCK_TITLES)
             skills = rng.sample(_MOCK_SKILLS, k=rng.randint(3, 8))
             summary = " ".join(rng.sample(_MOCK_SUMMARY_BITS, k=rng.randint(1, 3)))
+            n_companies = rng.randint(1, 4)
+            companies = rng.sample(_MOCK_PRODUCT, k=min(n_companies, len(_MOCK_PRODUCT)))
+            notice = rng.choice([0, 15, 30])
+            skill_levels = {s: rng.choice(["beginner", "intermediate", "advanced"])
+                            for s in rng.sample(skills, k=min(2, len(skills)))}
+
+            if archetype == "consulting_lifer":
+                companies = rng.sample(_MOCK_CONSULTING, k=rng.randint(2, 4))
+            elif archetype == "job_hopper":
+                companies = rng.sample(_MOCK_PRODUCT, k=4)  # many short stints
+            elif archetype == "long_notice":
+                notice = rng.choice([60, 90, 120, 150])
+            elif archetype == "honeypot_title_mismatch":
+                title = rng.choice(["Marketing Manager", "Sales Lead", "HR Partner"])
+                skills = skills + rng.sample(_MOCK_AI_SKILLS, k=2)
+
+            employment = _mock_employment(rng, companies)
+            if archetype == "job_hopper":
+                for e in employment:
+                    e["tenure_years"] = 1  # <1.5 avg tenure
+            total_exp = sum(e["tenure_years"] for e in employment)
+
+            current_company_age = total_exp + rng.randint(1, 20)  # plausible: age >= tenure
+            if archetype == "honeypot_overlap":
+                total_exp = current_company_age + rng.randint(2, 8)  # impossible overlap
+            elif archetype == "honeypot_fake_expert":
+                total_exp = 0  # zero real experience...
+                skill_levels[skills[0]] = "expert"  # ...yet claims expert level
+
             record = {
                 ID_FIELD: f"C{i:07d}",
                 "current_title": title,
                 "skills": skills,
                 "experience_summary": summary,
-                # A few extra fields the later phases will use (kept realistic).
-                "years_experience": rng.randint(1, 18),
+                "total_experience_years": total_exp,
+                "current_company_age_years": current_company_age,
+                "employment_history": employment,
+                "skill_assessment_scores": skill_levels,
+                "notice_period_days": notice,
                 "redrob_signals": {
                     "recruiter_response_rate": round(rng.uniform(0.2, 1.0), 2),
-                    "notice_period_days": rng.choice([0, 15, 30, 45, 60, 90]),
+                    "interview_completion_rate": round(rng.uniform(0.2, 1.0), 2),
                 },
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")

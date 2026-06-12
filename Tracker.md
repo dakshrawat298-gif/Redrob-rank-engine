@@ -21,13 +21,13 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 - [x] **P1-5** Build + serialize `candidate_embeddings.faiss` (`IndexFlatIP`); write `manifest.json`.
 
 ### Phase 2 — Filters & Scoring
-- [ ] **P2-1** Lazy record loader (seek → read → parse one record).
-- [ ] **P2-2** Pass 1 FAISS search wrapper (q → top-1000 ids + sem_score).
-- [ ] **P2-3** Honeypot detector: implement all trip reasons from `Schema.md` §4.
-- [ ] **P2-4** Hard filters (required skills, absolute ceilings).
-- [ ] **P2-5** 23-signal normalization module.
-- [ ] **P2-6** `final_score` scoring incl. job-hopper + consulting-only penalties; deterministic tie-breaks.
-- [ ] **P2-7** Central config block (weights, K, thresholds) — no magic numbers.
+- [x] **P2-1** Lazy record loader (seek → readline → parse one record; reads `manifest.plain_jsonl`).
+- [x] **P2-2** Pass 1 FAISS search wrapper (JD → top-1000 ids + sem_score via `id_map`).
+- [x] **P2-3** Honeypot detector: overlapping timeline, fake expert, title mismatch (immediate Tier 0).
+- [ ] **P2-4** Hard filters (required skills, absolute ceilings). _(deferred — needs real JD/schema)_
+- [ ] **P2-5** 23-signal normalization module. _(deferred — current scoring uses the request's subset)_
+- [x] **P2-6** `final_score` scoring (consulting-lifer ×0.1, job-hopper ×0.5, notice decay, engagement boost); deterministic tie-breaks (final↓, sem↓, id↑).
+- [x] **P2-7** Central config block (K, consulting set, thresholds, multipliers) — no magic numbers.
 
 ### Phase 3 — AST Reasoning
 - [ ] **P3-1** AST node types (leaf / composite / root).
