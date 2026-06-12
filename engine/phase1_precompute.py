@@ -47,12 +47,14 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import math
 import os
 import random
 import shutil
+import subprocess
 import sys
 import time
-from typing import Dict, Iterator, List, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Configuration constants (single source of truth for this stage)
@@ -127,7 +129,29 @@ def _mock_employment(rng: random.Random, companies: List[str]) -> List[dict]:
             for c in companies]
 
 
-def generate_mock_data(path: str, n: int = 100, seed: int = 42) -> None:
+# Longer narrative fragments used only when ``rich=True`` to pad each record's
+# ``raw_resume_text`` so the synthetic dataset reaches the real ~465MB scale at
+# n=100k (~4.6KB/record). This field is intentionally NOT in TEXT_FIELDS, so it
+# bloats the file (stressing streaming + byte-offset seek I/O at true scale)
+# without enlarging the embedded text (keeping embedding throughput realistic).
+_MOCK_RESUME_BITS = [
+    "Led the design and rollout of a fault-tolerant microservices platform serving millions of daily requests.",
+    "Owned the end-to-end CI/CD pipeline, cutting mean deployment time from hours to minutes.",
+    "Mentored a squad of engineers and ran weekly architecture reviews and brown-bag sessions.",
+    "Drove a database sharding migration that reduced p99 read latency by over forty percent.",
+    "Built observability tooling (metrics, tracing, structured logs) adopted across the org.",
+    "Partnered with product and design to ship a complete checkout redesign ahead of schedule.",
+    "Hardened authentication and authorization flows and led the SOC2 readiness effort.",
+    "Optimized a hot batch job with vectorized processing, saving substantial monthly compute spend.",
+    "Introduced contract tests and a staging gate that sharply reduced production regressions.",
+    "Authored the internal RFC process and championed pragmatic, incremental delivery.",
+    "Scaled the event-streaming backbone and tuned consumer back-pressure under peak load.",
+    "Refactored a legacy monolith into bounded contexts with clear ownership and SLAs.",
+]
+
+
+def generate_mock_data(path: str, n: int = 100, seed: int = 42,
+                       rich: bool = False) -> None:
     """Write ``n`` fake JSONL candidate lines to ``path`` for local testing.
 
     Records use the same field names the real dataset is expected to use so the
@@ -198,6 +222,12 @@ def generate_mock_data(path: str, n: int = 100, seed: int = 42) -> None:
                     "github_contribution_score": round(rng.uniform(0.0, 1.0), 2),
                 },
             }
+            if rich:
+                # ~4KB of realistic prose -> pushes each line to the real-dataset
+                # scale (~4.6KB) without touching the embedded text fields.
+                record["raw_resume_text"] = " ".join(
+                    rng.choices(_MOCK_RESUME_BITS, k=40)
+                )
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     log(f"mock data written | path={path} records={n}")
 
@@ -286,7 +316,7 @@ def iter_records_with_offsets(plain_path: str) -> Iterator[Tuple[int, str, str]]
 # ---------------------------------------------------------------------------
 
 def precompute(plain_path: str, outdir: str, model_name: str,
-               batch_size: int) -> dict:
+               batch_size: int, threads: Optional[int] = None) -> dict:
     """Stream the dataset, embed in batches, and write all Phase 1 artifacts."""
     # Heavy imports are done lazily so --help / mock generation work without them.
     import numpy as np
@@ -295,8 +325,13 @@ def precompute(plain_path: str, outdir: str, model_name: str,
 
     os.makedirs(outdir, exist_ok=True)
 
-    log(f"loading model | {model_name} (fastembed / onnx / cpu)")
-    model = TextEmbedding(model_name=model_name)
+    # ONNX defaults to a single intra-op thread, which makes large-scale
+    # embedding CPU-bound on one core. Use all available cores (R-perf): on this
+    # 4-core box this is the difference between ~20min and a few minutes at 100k.
+    if threads is None or threads <= 0:
+        threads = os.cpu_count() or 1
+    log(f"loading model | {model_name} (fastembed / onnx / cpu, threads={threads})")
+    model = TextEmbedding(model_name=model_name, threads=threads)
 
     # The FAISS index is created lazily on the first batch, once the embedding
     # dimension is known directly from the model output.
@@ -392,6 +427,276 @@ def precompute(plain_path: str, outdir: str, model_name: str,
 
 
 # ---------------------------------------------------------------------------
+# Parallel pre-computation (multi-core via subprocess shards)
+# ---------------------------------------------------------------------------
+# fastembed/onnxruntime is effectively single-core for our short texts (the
+# tokenizer dominates), so one process leaves 3 of 4 cores idle. We shard the
+# plain file into contiguous byte ranges and embed each in its own OS process
+# (true parallelism, no GIL, no fork+onnx issues), then merge in shard order so
+# the global FAISS row order / id_map stays deterministic (R7).
+
+def _shard_boundaries(plain_path: str, nshards: int) -> List[Tuple[int, int]]:
+    """Split the file into ``nshards`` contiguous [start, end) byte ranges, each
+    aligned to a line boundary so no record is split across shards."""
+    size = os.path.getsize(plain_path)
+    if nshards <= 1 or size == 0:
+        return [(0, size)]
+    cuts = [0]
+    with open(plain_path, "rb") as f:
+        for i in range(1, nshards):
+            f.seek(size * i // nshards)
+            f.readline()  # advance to the start of the next whole line
+            pos = f.tell()
+            if pos > cuts[-1] and pos < size:
+                cuts.append(pos)
+    cuts.append(size)
+    return [(cuts[i], cuts[i + 1]) for i in range(len(cuts) - 1)]
+
+
+def precompute_shard(plain_path: str, start: int, end: int, out_prefix: str,
+                     model_name: str, batch_size: int,
+                     threads: Optional[int]) -> int:
+    """Embed records in byte range [start, end) and write ``<out_prefix>.npy``
+    (normalized float32 vectors) + ``<out_prefix>.json`` ([abs_offset, id] list,
+    in file order). Absolute offsets stay valid against the original plain file."""
+    import numpy as np
+    import faiss
+    from fastembed import TextEmbedding
+
+    if threads is None or threads <= 0:
+        threads = 1
+    model = TextEmbedding(model_name=model_name, threads=threads)
+
+    meta: List[Tuple[int, str]] = []
+    vectors: List["np.ndarray"] = []
+    batch_texts: List[str] = []
+
+    def flush() -> None:
+        nonlocal batch_texts
+        if not batch_texts:
+            return
+        emb = np.asarray(list(model.embed(batch_texts, batch_size=batch_size)),
+                         dtype=np.float32)
+        faiss.normalize_L2(emb)
+        vectors.append(emb)
+        batch_texts = []
+
+    with open(plain_path, "rb") as f:
+        f.seek(start)
+        offset = start
+        while offset < end:
+            raw = f.readline()
+            if not raw:
+                break
+            line_len = len(raw)
+            stripped = raw.strip()
+            if stripped:
+                try:
+                    record = json.loads(raw.decode("utf-8"))
+                    cid = record.get(ID_FIELD)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    cid = None
+                if cid is not None:
+                    meta.append((offset, str(cid)))
+                    batch_texts.append(build_text(record))
+                    if len(batch_texts) >= batch_size:
+                        flush()
+            offset += line_len
+    flush()
+
+    arr = (np.vstack(vectors) if vectors
+           else np.zeros((0, EMBEDDING_DIM), dtype=np.float32))
+    np.save(out_prefix + ".npy", arr)
+    with open(out_prefix + ".json", "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    # Completion marker written LAST (after .npy/.json are durable). The resumable
+    # driver validates this against the CURRENT byte range + model before reusing a
+    # shard, so a stale/partial artifact from an earlier run with different
+    # boundaries or a different model is never silently merged.
+    with open(out_prefix + ".ok", "w", encoding="utf-8") as f:
+        json.dump({"start": start, "end": end, "model": model_name,
+                   "count": len(meta)}, f)
+    log(f"shard done | range=[{start},{end}) records={len(meta)} -> {out_prefix}.npy")
+    return len(meta)
+
+
+# Bytes per shard. Keeping shards small (≈50 MB) means each subprocess finishes
+# in 1-2 min and persists its .npy/.json, so a killed/interrupted run resumes
+# instead of restarting from zero. Concurrency (not shard size) drives peak RAM.
+SHARD_TARGET_BYTES = 50 * 1024 * 1024
+
+# A shard that exits non-zero (typically -9 / OOM from a transient neighbour
+# spike) is re-spawned up to this many times before the run gives up.
+MAX_SHARD_TRIES = 4
+SHARD_RETRY_COOLDOWN_S = 8.0
+
+
+def precompute_parallel(plain_path: str, outdir: str, model_name: str,
+                        batch_size: int, threads: Optional[int],
+                        workers: int, nshards: Optional[int] = None) -> dict:
+    """Multi-core driver: fan out byte-range shards to a *bounded pool* of at most
+    ``workers`` subprocesses, then merge them (in shard order) into the same
+    artifacts ``precompute`` would write.
+
+    Concurrency is capped at ``workers`` because each fastembed/onnxruntime
+    subprocess allocates a ~1.4 GB memory arena; 4 at once OOMs a 7.7 GB box
+    (SIGKILL/-9). With ``workers=2`` peak RAM stays ≈3 GB (under the 4 GB target).
+
+    Shards already on disk (both ``.npy`` and ``.json`` present) are skipped, so a
+    run that was killed mid-way resumes from where it stopped. Merge is always in
+    shard index order, so the global FAISS row order / id_map stays deterministic
+    (R7) regardless of completion order or resumes.
+    """
+    import numpy as np
+    import faiss
+
+    os.makedirs(outdir, exist_ok=True)
+    if nshards is None:
+        size = os.path.getsize(plain_path)
+        nshards = max(workers, math.ceil(size / SHARD_TARGET_BYTES) if size else 1)
+    boundaries = _shard_boundaries(plain_path, nshards)
+    nshards = len(boundaries)
+    workers = max(1, min(workers, nshards))
+    log(f"parallel precompute | workers={workers} shards={nshards}")
+
+    shard_dir = os.path.join(outdir, "_shards")
+    os.makedirs(shard_dir, exist_ok=True)
+    prefixes = [os.path.join(shard_dir, f"shard_{i}") for i in range(nshards)]
+
+    def _done(i: int) -> bool:
+        prefix = prefixes[i]
+        if not (os.path.exists(prefix + ".npy") and os.path.exists(prefix + ".json")
+                and os.path.exists(prefix + ".ok")):
+            return False
+        # Reuse only if the sidecar marker matches THIS run's range + model; a
+        # mismatch (or unreadable marker) means the shard is stale -> redo it.
+        try:
+            with open(prefix + ".ok", "r", encoding="utf-8") as f:
+                ok = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return False
+        start, end = boundaries[i]
+        return (ok.get("start") == start and ok.get("end") == end
+                and ok.get("model") == model_name)
+
+    def _spawn(i: int) -> subprocess.Popen:
+        start, end = boundaries[i]
+        argv = [sys.executable, os.path.abspath(__file__),
+                "--input", os.path.abspath(plain_path),
+                "--shard-start", str(start), "--shard-end", str(end),
+                "--shard-out", prefixes[i], "--model", model_name,
+                "--batch-size", str(batch_size), "--threads", "1"]
+        log(f"  shard {i}/{nshards} -> spawn (bytes {start}-{end})")
+        return subprocess.Popen(argv)
+
+    # Bounded pool: keep at most `workers` subprocesses alive at any time.
+    pending = [i for i in range(nshards) if not _done(i)]
+    skipped = nshards - len(pending)
+    if skipped:
+        log(f"  resuming: {skipped} shard(s) already on disk, {len(pending)} to do")
+    running: Dict[int, subprocess.Popen] = {}
+    attempts: Dict[int, int] = {}
+    pending.reverse()  # pop() yields ascending shard order
+    while pending or running:
+        while pending and len(running) < workers:
+            i = pending.pop()
+            attempts[i] = attempts.get(i, 0) + 1
+            running[i] = _spawn(i)
+        # Wait for any running shard to finish (poll loop keeps RAM observable).
+        done_idx = None
+        while done_idx is None:
+            for i, p in list(running.items()):
+                if p.poll() is not None:
+                    done_idx = i
+                    break
+            if done_idx is None:
+                time.sleep(0.5)
+        p = running.pop(done_idx)
+        rc = p.returncode
+        if rc != 0 or not _done(done_idx):
+            # Transient OOM (-9) is common when an always-on neighbour process
+            # spikes and our ~3GB embedder tips the 8GB cgroup over. Completed
+            # shards already persisted, so just retry this one after a short
+            # cool-down to let memory recover. Only give up after MAX_SHARD_TRIES.
+            if attempts[done_idx] < MAX_SHARD_TRIES:
+                log(f"  shard {done_idx} failed (rc={rc}), retry "
+                    f"{attempts[done_idx]}/{MAX_SHARD_TRIES} after cool-down")
+                time.sleep(SHARD_RETRY_COOLDOWN_S)
+                pending.append(done_idx)  # re-spawn when a slot frees
+                continue
+            for q in running.values():
+                q.terminate()
+            raise SystemExit(
+                f"shard {done_idx} failed with exit code {rc} after "
+                f"{attempts[done_idx]} tries (-9 = OOM: lower --workers or free "
+                f"RAM). Completed shards are kept for resume."
+            )
+        log(f"  shard {done_idx} done")
+
+    # Merge in shard order -> deterministic global row order (R7).
+    faiss_index = faiss.IndexFlatIP(EMBEDDING_DIM)
+    byte_offsets: Dict[str, int] = {}
+    id_map: List[str] = []
+    for i, prefix in enumerate(prefixes):
+        emb = np.load(prefix + ".npy")
+        if emb.shape[0]:
+            faiss_index.add(emb.astype(np.float32))
+        with open(prefix + ".json", "r", encoding="utf-8") as f:
+            for offset, cid in json.load(f):
+                if cid in byte_offsets:
+                    log(f"WARN duplicate candidate_id '{cid}' - keeping first")
+                    continue
+                byte_offsets[cid] = offset
+                id_map.append(cid)
+
+    if faiss_index.ntotal == 0:
+        log("ERROR no valid candidates were embedded; nothing to write")
+        raise SystemExit(3)
+    assert faiss_index.ntotal == len(id_map) == len(byte_offsets), (
+        f"count mismatch: index={faiss_index.ntotal} id_map={len(id_map)} "
+        f"offsets={len(byte_offsets)}"
+    )
+
+    faiss_path = os.path.join(outdir, FAISS_FILENAME)
+    offsets_path = os.path.join(outdir, OFFSETS_FILENAME)
+    idmap_path = os.path.join(outdir, IDMAP_FILENAME)
+    manifest_path = os.path.join(outdir, MANIFEST_FILENAME)
+
+    faiss.write_index(faiss_index, faiss_path)
+    with open(offsets_path, "w", encoding="utf-8") as f:
+        json.dump(byte_offsets, f)
+    with open(idmap_path, "w", encoding="utf-8") as f:
+        json.dump(id_map, f)
+
+    manifest = {
+        "model_name": model_name,
+        "embedding_backend": "fastembed-onnx-cpu",
+        "embedding_dim": EMBEDDING_DIM,
+        "count": faiss_index.ntotal,
+        "normalized": True,
+        "index_type": "IndexFlatIP",
+        "text_fields": list(TEXT_FIELDS),
+        "id_field": ID_FIELD,
+        "plain_jsonl": os.path.abspath(plain_path),
+        "workers": workers,
+        "artifacts": {
+            "faiss": os.path.abspath(faiss_path),
+            "byte_offset_index": os.path.abspath(offsets_path),
+            "id_map": os.path.abspath(idmap_path),
+        },
+    }
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+    shutil.rmtree(shard_dir, ignore_errors=True)
+    log(f"wrote {faiss_path} | vectors={faiss_index.ntotal} dim={EMBEDDING_DIM}")
+    log(f"wrote {offsets_path} | entries={len(byte_offsets)}")
+    log(f"wrote {idmap_path} | entries={len(id_map)}")
+    log(f"wrote {manifest_path}")
+    return manifest
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -409,16 +714,36 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
                    help="fastembed model name (384-dim all-MiniLM-L6-v2 default)")
     p.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE,
                    help="Embedding batch size (bounds peak memory)")
+    p.add_argument("--threads", type=int, default=0,
+                   help="ONNX intra-op threads (0 = all CPU cores)")
+    p.add_argument("--rich", action="store_true",
+                   help="pad mock records to real ~4.6KB/record scale (~465MB at 100k)")
+    p.add_argument("--workers", type=int, default=1,
+                   help="parallel embedding processes (>1 shards across CPU cores)")
+    # Internal worker-mode flags (used by precompute_parallel; not for direct use).
+    p.add_argument("--shard-start", type=int, default=None, help=argparse.SUPPRESS)
+    p.add_argument("--shard-end", type=int, default=None, help=argparse.SUPPRESS)
+    p.add_argument("--shard-out", default=None, help=argparse.SUPPRESS)
     return p.parse_args(argv)
 
 
 def main(argv: List[str]) -> int:
     args = parse_args(argv)
+
+    # --- Worker mode: embed one byte-range shard and exit (no artifacts) ---
+    if args.shard_out is not None:
+        if not args.input or args.shard_start is None or args.shard_end is None:
+            log("ERROR shard mode requires --input, --shard-start, --shard-end")
+            return 2
+        precompute_shard(args.input, args.shard_start, args.shard_end,
+                         args.shard_out, args.model, args.batch_size, args.threads)
+        return 0
+
     os.makedirs(args.outdir, exist_ok=True)
 
     if args.mock > 0:
         mock_path = os.path.join(args.outdir, PLAIN_JSONL_FILENAME)
-        generate_mock_data(mock_path, n=args.mock)
+        generate_mock_data(mock_path, n=args.mock, rich=args.rich)
         input_path = mock_path
     elif args.input:
         if not os.path.exists(args.input):
@@ -431,7 +756,12 @@ def main(argv: List[str]) -> int:
 
     plain_path = ensure_plain_jsonl(input_path, args.outdir)
     log(f"start precompute | input={input_path} plain={plain_path} outdir={args.outdir}")
-    precompute(plain_path, args.outdir, args.model, args.batch_size)
+    if args.workers and args.workers >= 1:
+        precompute_parallel(plain_path, args.outdir, args.model, args.batch_size,
+                            threads=args.threads, workers=args.workers)
+    else:
+        precompute(plain_path, args.outdir, args.model, args.batch_size,
+                   threads=args.threads)
     log(f"DONE | total={time.monotonic() - _START:.2f}s")
     return 0
 

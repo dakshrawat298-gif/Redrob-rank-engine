@@ -20,3 +20,13 @@ CPU-only / <=16GB / <=5min constraints.
 line from `[tool.uv.sources]` in `pyproject.toml` first (torch can stay pinned to
 pytorch-cpu). Otherwise prefer fastembed. fastembed downloads the ONNX model from HF Hub on
 first use (fine at offline precompute time; not allowed during the no-network ranking stage).
+
+**Runtime footprint / parallelism:** a single fastembed/onnxruntime embedder plateaus at
+~3GB RSS within ~18s and stays there regardless of shard size (the ONNX CPU mem-arena, not
+our data, dominates — shrinking `batch_size` barely helps). So embedding scale-out is bounded
+by RAM, not CPU: at >1 concurrent embedder you exceed the ~8GB sandbox cgroup and get OOM.
+The precompute driver is a bounded, resumable shard pool (per-shard `.npy`/`.json` + a `.ok`
+sidecar marker that records range+model for stale-artifact detection) with retry-on-OOM;
+default workers=1 here. The merge is deterministic (shards merged in index order) and was
+validated byte-identical to single-process. See [sandbox-long-jobs](sandbox-long-jobs.md) for
+the cgroup limits and why this must run as a workflow, not a `nohup &` background job.
