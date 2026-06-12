@@ -30,11 +30,11 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 - [x] **P2-7** Central config block (K, consulting set, thresholds, multipliers) — no magic numbers.
 
 ### Phase 3 — AST Reasoning
-- [ ] **P3-1** AST node types (leaf / composite / root).
-- [ ] **P3-2** Leaf binding rule: render only on present, non-null fields; prune otherwise.
-- [ ] **P3-3** Clause ordering + ≤240-char surface form (`Design.md` §2).
-- [ ] **P3-4** Skill clauses restricted to candidate's own skills.
-- [ ] **P3-5** Reasoning traceability validator (fail-closed on any ungrounded token).
+- [x] **P3-1** AST node types (`Lit`/`Field`/`Skills` leaves, `Seq`/`Choice` composites).
+- [x] **P3-2** Leaf binding rule: render only on present, non-null fields; prune otherwise.
+- [x] **P3-3** Rank-tiered tone + concern clauses + ≤240-char surface form (`Design.md` §2).
+- [x] **P3-4** Skill clauses restricted to candidate's own skills (matched-against-JD subset).
+- [x] **P3-5** Fail-closed grounding validator (rejects `{}` or any number not in the record).
 
 ### Phase 4 — Sandbox & Submission
 - [ ] **P4-1** CLI entrypoint wiring Stages A–F → `team_xxx.csv` + terminal log.

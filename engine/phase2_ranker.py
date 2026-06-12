@@ -41,6 +41,11 @@ import sys
 import time
 from typing import Dict, List, Optional, Tuple
 
+try:  # works whether run as a script (engine/) or imported as engine.phase2_ranker
+    from phase3_reasoning import build_reasoning, match_skills
+except ImportError:  # pragma: no cover
+    from engine.phase3_reasoning import build_reasoning, match_skills
+
 # ---------------------------------------------------------------------------
 # Configuration (single source of truth - no magic numbers, Rules.md spirit)
 # ---------------------------------------------------------------------------
@@ -330,11 +335,19 @@ def rank(artifacts_dir: str, jd_text: str, k: int, top_n: int, debug: bool
 
             multiplier, breakdown = compute_multiplier(record)
             final_score = base_score * multiplier
+            notice_days = record.get("notice_period_days")
+            if notice_days is None:
+                notice_days = (record.get("redrob_signals") or {}).get("notice_period_days")
             scored.append({
                 "candidate_id": cid,
                 "score": final_score,
                 "sem_score": base_score,
                 "multiplier": multiplier,
+                # Carried into Phase 3 reasoning (only the recall set, R1).
+                "record": record,
+                "hopper_fired": breakdown["hopper"] < 1.0,
+                "notice_days": notice_days,
+                "matched_skills": match_skills(record, jd_text),
             })
             if debug:
                 log(f"  KEEP {cid} | base={base_score:.4f} mult={multiplier:.3f} "
@@ -346,6 +359,17 @@ def rank(artifacts_dir: str, jd_text: str, k: int, top_n: int, debug: bool
     # Deterministic sort: final score desc, then sem_score desc, then id asc (R7).
     scored.sort(key=lambda r: (-r["score"], -r["sem_score"], r["candidate_id"]))
     top = scored[:top_n]
+
+    # Phase 3: grounded AST reasoning for the final ranked list.
+    log("Phase 3: generating grounded reasoning (AST templating)")
+    for rank_pos, row in enumerate(top, start=1):
+        row["reasoning"] = build_reasoning(
+            record=row["record"],
+            rank=rank_pos,
+            matched_skills=row["matched_skills"],
+            hopper_fired=row["hopper_fired"],
+            notice_days=row["notice_days"],
+        )
     log(f"selected Top {len(top)} (requested {top_n})")
     return top
 
@@ -365,7 +389,7 @@ def write_csv(rows: List[dict], out_path: str) -> None:
                 row["candidate_id"],
                 rank_pos,
                 f"{row['score']:.6f}",
-                REASONING_PLACEHOLDER,
+                row.get("reasoning") or REASONING_PLACEHOLDER,
             ])
     log(f"wrote {out_path} | rows={len(rows)}")
 

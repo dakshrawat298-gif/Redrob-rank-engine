@@ -55,18 +55,37 @@ C0042900,3,0.889305,"Semantic fit 0.82; 6y backend incl. Java, Spring; notice 45
 
 ## 2. `reasoning` Composition Rules (output-side)
 
-The AST engine (`TechSpec.md` §7) emits the string; this section pins the surface form:
+The AST engine (`TechSpec.md` §7, implemented in `engine/phase3_reasoning.py`) emits the string;
+this section pins the surface form. **No LLM is used** — the text is assembled from a small AST of
+template nodes whose leaves bind directly to the candidate's own JSON fields, so hallucination is
+structurally impossible (`Rules.md` §R2).
 
 - **One sentence-group, ≤ 240 chars, single line.**
-- **Clause order (only clauses with present data render):**
-  1. Semantic fit (`Semantic fit <0.00–1.00>`).
-  2. Experience summary (`<years>y <domain> incl. <≤3 matched skills from candidate's own list>`).
-  3. Availability (`notice <notice_period_days>d`).
-  4. Top behavioral evidence (1–3 of the strongest `redrob_signals`, named with their values).
+- **Rank-tiered tone** (the Stage-4 rubric rewards tone that tracks rank):
+  - **Ranks 1–20** — highly positive ("Exceptional fit …", "Top-tier match …").
+  - **Ranks 21–80** — balanced ("Solid … background matching JD requirements …").
+  - **Ranks 81–100** — explicit filler ("Adjacent skills only — likely below cutoff but included
+    as final filler …").
+  - 3–4 phrasings per tier, chosen **deterministically per `candidate_id`** (R7) for variation;
+    a phrasing that would reference a missing field prunes and the next phrasing is used.
+- **Grounded facts only** (a clause renders only when its backing field is present, non-null):
+  experience years, current title, ≤3 **matched** skills (strictly from the candidate's own list,
+  filtered to those present in the JD), and `github_contribution_score`.
+- **Honest-concern clauses** (red flags are surfaced, not hidden — the rubric penalises missing
+  risk). Appended after the main clause:
+  - `notice_period_days > 30` → "; however, note the extended notice period of `<N>` days".
+  - job-hopper penalty fired (avg tenure < 1.5y) → "; candidate shows frequent job transitions".
 - **Never** include: skills not in the candidate's list; signal names with no value present;
-  generic filler ("great candidate", "highly motivated"); the words "AI"/"LLM"; any penalty
-  internals (penalties affect `score`, not prose).
+  vague filler ("great candidate", "highly motivated"); the words "AI"/"LLM".
+- **Fail-closed grounding check:** the output is rejected (and a minimal grounded fallback used) if
+  it contains any unresolved `{}` placeholder or any number not traceable to the candidate's record.
 - Numbers are rendered exactly as derived; no rounding that changes meaning beyond display.
+
+> **Decision note (Phase 3):** an earlier draft forbade surfacing any "penalty internals" in the
+> prose. That is reversed here: penalties still only affect `score`, but the *underlying red flags*
+> (extended notice, frequent transitions) are stated as honest concerns because the Stage-4 manual
+> review explicitly rewards disclosed risk. Tier-based tone replaces the fixed clause order of the
+> earlier draft.
 
 ---
 

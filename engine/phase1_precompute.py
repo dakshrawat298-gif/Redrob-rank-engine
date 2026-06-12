@@ -195,6 +195,7 @@ def generate_mock_data(path: str, n: int = 100, seed: int = 42) -> None:
                 "redrob_signals": {
                     "recruiter_response_rate": round(rng.uniform(0.2, 1.0), 2),
                     "interview_completion_rate": round(rng.uniform(0.2, 1.0), 2),
+                    "github_contribution_score": round(rng.uniform(0.0, 1.0), 2),
                 },
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
