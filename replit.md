@@ -1,6 +1,19 @@
-# [Project name]
+# Redrob Rank Engine
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A CPU-only candidate ranking system (Redrob "India Runs" Hackathon — Track 1) that scores 100,000 synthetic candidate profiles against a job description and emits the Top 100 as `team_xxx.csv`, within a 5-minute / 16GB / no-network budget.
+
+## Architecture docs (source of truth — review before any code)
+
+- `PRD.md` — objective, metrics (NDCG@10, MAP), the 3 pillars
+- `TechSpec.md` — two-pass FAISS pipeline + scoring math
+- `AppFlow.md` — end-to-end data flow
+- `Design.md` — output CSV contract + terminal logging
+- `Schema.md` — input record, the 23 `redrob_signals`, honeypot criteria
+- `ImplementationPlan.md` — phased delivery plan
+- `Tracker.md` — Kanban board
+- `Rules.md` — unbreakable guardrails (precedence over other docs)
+
+> Implementation (Python ranking code) is gated until the user approves the 8 docs above.
 
 ## Run & Operate
 
