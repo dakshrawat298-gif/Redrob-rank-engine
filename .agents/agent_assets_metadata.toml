@@ -12,3 +12,9 @@ id = "_fr_yWHMzDipZffiXNEXQ"
 uri = "file://NotebookLM_Master_Codebase.txt"
 type = "text"
 title = "NotebookLM_Master_Codebase.txt — audit master file"
+
+[[outputs]]
+id = "ucV-O5NleOfi09Vl9JrpO"
+uri = "file://NotebookLM_Master_Codebase_v2.txt"
+type = "text"
+title = "NotebookLM Master Codebase V2 — Redrob Rank Engine"

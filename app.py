@@ -59,9 +59,9 @@ query = st.text_input(
 
 view = df
 if query:
-    mask = df["candidate_id"].str.contains(query, case=False, na=False) | df[
-        "reasoning"
-    ].str.contains(query, case=False, na=False)
+    mask = df["candidate_id"].str.contains(
+        query, case=False, na=False, regex=False
+    ) | df["reasoning"].str.contains(query, case=False, na=False, regex=False)
     view = df[mask]
     st.caption(f"Showing {len(view)} of {len(df)} candidates matching “{query}”.")
 
