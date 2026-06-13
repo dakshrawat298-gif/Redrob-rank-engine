@@ -1,3 +1,5 @@
-- [Embedding backend](embedding-backend.md) — use fastembed (ONNX/CPU), not sentence-transformers; root pyproject pins ST to the pytorch-cpu index so uv can't resolve it.
-- [Sandbox long jobs](sandbox-long-jobs.md) — `nohup &` jobs get reaped ~5min after the tool call; run long jobs as a workflow. cgroup max ~8GB shared w/ artifact workflows; 1 embedder (~3GB) only safe config.
-- [Real dataset schema](real-dataset-schema.md) — real candidates.jsonl nests fields under `profile.*`/`skills[].name`/`career_history[]`/`redrob_signals.*`; all 3 phases reconciled; watch sentinels (github -1, assessment dict); clear engine/data before rebuild.
+- [Embedding backend](embedding-backend.md) — use fastembed (ONNX/CPU), not sentence-transformers (root pyproject pins ST to pytorch-cpu index, unresolvable).
+- [Sandbox long jobs](sandbox-long-jobs.md) — `nohup &` jobs reaped ~5min after tool call; run long jobs as a workflow. ~8GB cgroup; 1 embedder (~3GB) only safe config.
+- [Real dataset schema](real-dataset-schema.md) — real candidates.jsonl nests under `profile.*`/`skills[].name`/`career_history[]`/`redrob_signals.*`; watch sentinels; clear engine/data before rebuild.
+- [Audit remediation verdicts](audit-remediation.md) — vet every audit finding against real data first; 2 of 7 were false; skill match needs word-boundary + trap deny-list.
+- [Air-gap offline lock](airgap-offline-lock.md) — make fastembed offline conditional on caller's HF_HUB_OFFLINE, never forced, or first-run download breaks (/tmp cache is ephemeral).

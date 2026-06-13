@@ -9,7 +9,7 @@ not be rejected by the evaluation harness:
   * EXACTLY 100 data rows
   * ``candidate_id`` non-empty, unique, and present in the real dataset
   * ``rank`` is the contiguous integer sequence 1..100
-  * ``score`` parses as float and is monotonically NON-INCREASING with rank
+  * ``score`` parses as float, lies within [0.0, 1.0], and is NON-INCREASING with rank
   * ``reasoning`` is non-empty and 100% grounded in the source record (R2)
 
 Run:
@@ -90,6 +90,8 @@ def validate(csv_path: str, artifacts: str, jd_path: str | None):
 
         try:
             score = float(score_s)
+            if not (-1e-9 <= score <= 1.0 + 1e-9):
+                errors.append(f"row {i}: score {score} outside [0.0, 1.0] bounds")
             if prev_score is not None and score > prev_score + 1e-9:
                 errors.append(
                     f"row {i}: score {score} > previous {prev_score} (not monotonic)"
@@ -149,7 +151,7 @@ def main(argv):
             print(f"  [error] {e}")
         return 1
     print("RESULT: PASS - header, 100 rows, unique ids, contiguous/monotonic rank, "
-          "non-increasing score, non-empty grounded reasoning. Submission valid.")
+          "score in [0,1] non-increasing, non-empty grounded reasoning. Submission valid.")
     return 0
 
 

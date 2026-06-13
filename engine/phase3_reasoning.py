@@ -35,6 +35,16 @@ MAX_CHARS = 240
 SKILLS_IN_REASONING = 3          # at most N matched skills named
 NOTICE_CONCERN_THRESHOLD = 30    # days; mirrors Phase 2 notice decay
 
+# Trap / non-technical skill keywords that must NEVER be surfaced as positive
+# matches, even when the JD text literally contains them (this JD mentions
+# "marketing" and "HR-tech"). Surfacing a candidate's "Marketing"/"HR" skill for
+# an AI-engineering role is exactly the keyword trap the dataset warns about, so
+# we deny-list them at the source (R2 spirit). JD-archetype-specific by design.
+SKILL_DENY_LIST = {
+    "marketing", "sales", "hr", "human resources", "recruiting",
+    "recruitment", "accounting", "finance",
+}
+
 
 # ---------------------------------------------------------------------------
 # Field formatters (single source of truth - render AND validator agree)
@@ -97,6 +107,11 @@ def github_score(record: dict) -> Optional[float]:
     The dataset uses a negative value (e.g. ``-1``) as a "no GitHub data"
     sentinel; we return ``None`` for those so the reasoning never surfaces a
     nonsensical / misleading metric (R2).
+
+    NOTE: the real dataset field is ``github_activity_score``. An external audit
+    suggested renaming it to ``github_contribution_score``; that field exists in
+    0/2000 sampled records, so the rename is REJECTED -- applying it would null
+    out this signal for every candidate.
     """
     v = signals_of(record).get("github_activity_score")
     return float(v) if isinstance(v, (int, float)) and v >= 0 else None
@@ -300,17 +315,36 @@ def tier_of(rank: int) -> str:
     return "filler"
 
 
+def _jd_contains_word(skill_lc: str, jd_lc: str) -> bool:
+    """True iff ``skill_lc`` appears in the JD as a whole token (not a substring).
+
+    Substring matching is a real bug: skills like "Go" or "Rust" match inside
+    unrelated words ("cateGOry", "roBUST"), surfacing skills the JD never actually
+    mentions. We require non-alphanumeric boundaries on both sides so only genuine
+    whole-word skill mentions count.
+    """
+    if not skill_lc:
+        return False
+    pattern = r"(?<![a-z0-9])" + re.escape(skill_lc) + r"(?![a-z0-9])"
+    return re.search(pattern, jd_lc) is not None
+
+
 def match_skills(record: dict, jd_text: str) -> List[str]:
-    """Return the candidate's OWN skills that also appear in the JD text.
+    """Return the candidate's OWN skills that also appear in the JD as words.
 
     Grounded by construction: the result is always a subset of the candidate's
-    declared skills (never invented), filtered by case-insensitive presence in
-    the JD so the reasoning only cites *relevant* matches.
+    declared skills (never invented). Two guards keep it honest: (1) whole-word
+    matching (no substring false positives like "Go"/"Rust"), and (2) a deny-list
+    of trap / non-technical keywords that are dropped even when present in the JD,
+    so the reasoning can never cite e.g. "Marketing" as a positive match (R2).
     """
     jd_lower = (jd_text or "").lower()
     out: List[str] = []
     for s_str in skill_names(record):
-        if s_str.lower() in jd_lower:
+        s_lc = s_str.lower()
+        if s_lc in SKILL_DENY_LIST:
+            continue
+        if _jd_contains_word(s_lc, jd_lower):
             out.append(s_str)
     return out
 

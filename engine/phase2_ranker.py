@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import heapq
 import json
 import os
 import re
@@ -74,6 +75,11 @@ NON_TECH_TITLE_TOKENS = ("marketing", "sales", "hr", "human resources")
 
 # Multiplier constants.
 CONSULTING_LIFER_MULTIPLIER = 0.1
+# 0.5x penalty per R3 ("aggressively penalize job hoppers"). The hopper flag is
+# tracked independently of this multiplier and ALWAYS surfaced as an honest
+# concern in the reasoning for any hopper that still makes the Top-N, so the
+# penalty never hides the flag (audit finding #7 was a misdiagnosis). Soften to
+# 0.8 only if you explicitly accept the R3 tradeoff.
 JOB_HOPPER_MULTIPLIER = 0.5
 JOB_HOPPER_TENURE_THRESHOLD = 1.5      # years per company
 NOTICE_FREE_DAYS = 30                   # <= this -> no notice penalty
@@ -150,12 +156,37 @@ def load_artifacts(artifacts_dir: str):
 # ---------------------------------------------------------------------------
 
 def embed_query(jd_text: str, model_name: str):
-    """Embed the JD with the same fastembed model used in Phase 1, normalized."""
+    """Embed the JD with the same fastembed model used in Phase 1, normalized.
+
+    Air-gap lock (R5): if the caller engaged the air-gap (``run_ranker.py``'s
+    ``network_air_gap`` sets ``HF_HUB_OFFLINE=1`` *before* ranking starts), we
+    reinforce every offline switch and load the model strictly from the local
+    cache that Phase 1 populated -- never pinging the HF Hub. A missing local
+    model then fails loud (R10) instead of silently reaching for the network.
+
+    When NO air-gap is requested (Phase 1 / dev runs), we must NOT force offline,
+    or the very first run could never download and cache the model. Telemetry is
+    always disabled regardless.
+    """
+    airgap = os.environ.get("HF_HUB_OFFLINE") == "1"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    if airgap:
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ["HF_DATASETS_OFFLINE"] = "1"
+
     import numpy as np
     import faiss
     from fastembed import TextEmbedding
 
-    model = TextEmbedding(model_name=model_name)
+    try:
+        model = TextEmbedding(model_name=model_name)
+    except Exception as exc:  # noqa: BLE001 - surface a missing offline model loudly
+        if airgap:
+            log(f"ERROR could not load embedding model '{model_name}' from the "
+                f"local cache under the ranking air-gap (R5/R10); Phase 1 must "
+                f"cache it while online before air-gapped ranking. ({exc})")
+            raise SystemExit(2)
+        raise
     vec = np.asarray(list(model.embed([jd_text])), dtype=np.float32)
     faiss.normalize_L2(vec)  # cosine via IndexFlatIP
     return vec
@@ -284,12 +315,13 @@ def detect_honeypot(record: dict) -> Optional[str]:
             and tenure > span * OVERLAP_TENURE_RATIO):
         return "overlapping_timeline"
 
-    # 2. Fake expert: an expert-level assessment score with zero real experience.
+    # 2. Fake expert: an expert-level assessment score with <0.5y real experience.
+    #    (exp==0 was too weak; <0.5 also catches sub-6-month fabricated experts.)
     assessments = signals.get("skill_assessment_scores")
     if isinstance(assessments, dict):
         has_expert = any(isinstance(v, (int, float)) and v >= EXPERT_SCORE_THRESHOLD
                          for v in assessments.values())
-        if has_expert and isinstance(exp, (int, float)) and exp == 0:
+        if has_expert and isinstance(exp, (int, float)) and exp < 0.5:
             return "fake_expert"
 
     # 3. Title mismatch trap: non-technical current title but AI-engineering skills.
@@ -356,6 +388,23 @@ def compute_multiplier(record: dict) -> Tuple[float, Dict[str, float]]:
 # Ranking driver
 # ---------------------------------------------------------------------------
 
+class _RevId:
+    """Wrap a candidate_id so a LARGER id compares as "smaller".
+
+    Lets a size-``top_n`` min-heap evict the worst candidate on score/sem_score
+    ties using the canonical tie-break (ascending candidate_id ranks higher, so
+    the larger id is the one to drop first). Determinism preserved (R7).
+    """
+
+    __slots__ = ("s",)
+
+    def __init__(self, s: str):
+        self.s = s
+
+    def __lt__(self, other: "_RevId") -> bool:
+        return self.s > other.s
+
+
 def rank(artifacts_dir: str, jd_text: str, k: int, top_n: int, debug: bool
          ) -> List[dict]:
     """Run Pass 1 + Pass 2 and return the Top-N scored candidate dicts."""
@@ -369,7 +418,14 @@ def rank(artifacts_dir: str, jd_text: str, k: int, top_n: int, debug: bool
     log(f"Pass 1: recalled {len(recall)} candidates")
 
     log("Pass 2: lazy-load metadata + score (honeypots + multipliers)")
-    scored: List[dict] = []
+    # Bounded top-N retention (R1): keep at most ``top_n`` survivors in a min-heap
+    # whose root is always the WORST kept candidate, so memory is O(top_n) records
+    # instead of O(K). The heap order is the exact inverse of the final tie-break
+    # (R7): worst = lowest score, then lowest sem_score, then LARGEST candidate_id
+    # (ascending id ranks higher). ``_RevId`` makes the larger id compare as
+    # "smaller" so the min-heap evicts it first on ties.
+    heap: list = []
+    kept = 0
     dropped = 0
     drop_reasons: Dict[str, int] = {}
     missing = 0
@@ -397,7 +453,7 @@ def rank(artifacts_dir: str, jd_text: str, k: int, top_n: int, debug: bool
             final_score = base_score * multiplier
             notice_days = signals_of(record).get("notice_period_days",
                                                  record.get("notice_period_days"))
-            scored.append({
+            payload = {
                 "candidate_id": cid,
                 "score": final_score,
                 "sem_score": base_score,
@@ -407,17 +463,34 @@ def rank(artifacts_dir: str, jd_text: str, k: int, top_n: int, debug: bool
                 "hopper_fired": breakdown["hopper"] < 1.0,
                 "notice_days": notice_days,
                 "matched_skills": match_skills(record, jd_text),
-            })
+            }
+            kept += 1
+            item = (final_score, base_score, _RevId(cid), payload)
+            if len(heap) < top_n:
+                heapq.heappush(heap, item)
+            else:
+                heapq.heappushpop(heap, item)  # keep the top_n best, evict worst
             if debug:
                 log(f"  KEEP {cid} | base={base_score:.4f} mult={multiplier:.3f} "
                     f"final={final_score:.4f} {breakdown}")
 
-    log(f"Pass 2: kept={len(scored)} dropped_honeypots={dropped} "
+    log(f"Pass 2: kept={kept} retained={len(heap)} dropped_honeypots={dropped} "
         f"missing={missing} reasons={drop_reasons or '{}'}")
 
-    # Deterministic sort: final score desc, then sem_score desc, then id asc (R7).
-    scored.sort(key=lambda r: (-r["score"], -r["sem_score"], r["candidate_id"]))
-    top = scored[:top_n]
+    # Deterministic final order: score desc, then sem_score desc, then id asc (R7).
+    top = [item[3] for item in heap]
+    top.sort(key=lambda r: (-r["score"], -r["sem_score"], r["candidate_id"]))
+    top = top[:top_n]
+
+    # Score normalization (R9 precaution): map raw scores into [0,1] with a single
+    # monotonic transform so order and the non-increasing property are preserved
+    # EXACTLY while the column stays within the [0,1] band the harness may expect.
+    # Dividing by the top raw score keeps granularity (unlike a flat min(x,1.0)
+    # clamp, which would collapse the whole top tier into 1.0 ties).
+    max_raw = top[0]["score"] if top else 0.0
+    for row in top:
+        raw = row["score"]
+        row["score"] = (max(raw, 0.0) / max_raw) if max_raw > 0 else 0.0
 
     # Phase 3: grounded AST reasoning for the final ranked list.
     log("Phase 3: generating grounded reasoning (AST templating)")
