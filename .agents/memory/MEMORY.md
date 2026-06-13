@@ -1,2 +1,3 @@
 - [Embedding backend](embedding-backend.md) — use fastembed (ONNX/CPU), not sentence-transformers; root pyproject pins ST to the pytorch-cpu index so uv can't resolve it.
 - [Sandbox long jobs](sandbox-long-jobs.md) — `nohup &` jobs get reaped ~5min after the tool call; run long jobs as a workflow. cgroup max ~8GB shared w/ artifact workflows; 1 embedder (~3GB) only safe config.
+- [Real dataset schema](real-dataset-schema.md) — real candidates.jsonl nests text under `profile.*`/`skills[]`/`career_history[]`; phase1 build_text reconciled, phase2/3 NOT; clear engine/data before rebuild.

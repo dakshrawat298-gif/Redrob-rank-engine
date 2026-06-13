@@ -65,12 +65,21 @@ from typing import Dict, Iterator, List, Optional, Tuple
 DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
 
-# Field names used to build the embedding text. Per the Phase 1 request these are
-# `current_title`, `skills`, and `experience_summary`. They are kept here as
-# constants so they are trivial to reconcile against the real dataset schema
-# (see Schema.md section 2) without touching the logic below.
+# Field names used to build the embedding text. Reconciled against the REAL
+# dataset schema (nested ``profile`` + ``skills``/``career_history``/``education``
+# lists). The ID is a top-level ``candidate_id`` (e.g. "CAND_0000001").
 ID_FIELD = "candidate_id"
-TEXT_FIELDS = ("current_title", "skills", "experience_summary")
+# Real dataset schema: the semantically-rich fields are nested under ``profile``
+# plus the ``skills`` / ``career_history`` / ``education`` lists. These names are
+# documentary (the actual extraction happens in ``build_text``); they are recorded
+# in the manifest so a reader knows exactly what was embedded.
+TEXT_FIELDS = ("profile.headline", "profile.current_title", "profile.current_company",
+               "profile.current_industry", "skills[].name", "profile.summary",
+               "career_history[].title", "career_history[].description",
+               "education[].field_of_study")
+# MiniLM truncates to ~256 tokens, so embedding text longer than this only wastes
+# tokenization CPU without changing the vector. Cap the composed string.
+EMBED_MAX_CHARS = 2000
 
 # Output artifact filenames.
 FAISS_FILENAME = "candidate_embeddings.faiss"
@@ -258,27 +267,82 @@ def ensure_plain_jsonl(input_path: str, outdir: str) -> str:
 # Core: stream records, build offsets + embedding text
 # ---------------------------------------------------------------------------
 
-def build_text(record: dict) -> str:
-    """Combine the configured text fields into one dense string per candidate.
+def _join_nonempty(values, sep: str = ", ") -> str:
+    """Join only the non-empty stringified values (drops None/blank)."""
+    out = [str(v).strip() for v in values if v is not None and str(v).strip()]
+    return sep.join(out)
 
-    ``current_title`` + ``skills`` + ``experience_summary`` (Phase 1 request).
-    Lists (e.g. skills) are joined; missing fields are simply skipped so we never
-    fabricate content (consistent with the zero-hallucination ethos, Rules.md R2).
+
+def _as_clean_str(value) -> str:
+    """Stringify a *scalar* field safely.
+
+    Returns "" for ``None`` or container types (dict/list/tuple/set) so a
+    malformed value can never crash ``.strip()`` and abort the build.
     """
+    if value is None or isinstance(value, (dict, list, tuple, set)):
+        return ""
+    return str(value).strip()
+
+
+def build_text(record: dict) -> str:
+    """Combine the candidate's semantic fields into one dense string for embedding.
+
+    Reads the REAL nested schema: ``profile.{headline,current_title,current_company,
+    current_industry,summary}``, ``skills[].name``, ``career_history[].{title,
+    description}`` and ``education[].field_of_study``. Missing fields are skipped so
+    we never fabricate content (zero-hallucination ethos, Rules.md R2). The most
+    salient fields come first and the result is capped at ``EMBED_MAX_CHARS`` (the
+    model truncates to ~256 tokens, so longer input only wastes tokenization CPU).
+    """
+    profile = record.get("profile")
+    if not isinstance(profile, dict):
+        profile = {}
     parts: List[str] = []
-    for field in TEXT_FIELDS:
-        value = record.get(field)
-        if value is None:
-            continue
-        if isinstance(value, (list, tuple)):
-            joined = ", ".join(str(v) for v in value if v is not None)
-            if joined:
-                parts.append(joined)
-        else:
-            text = str(value).strip()
-            if text:
-                parts.append(text)
-    return " | ".join(parts)
+
+    headline = _as_clean_str(profile.get("headline"))
+    if headline:
+        parts.append(headline)
+
+    title = _as_clean_str(profile.get("current_title"))
+    company = _as_clean_str(profile.get("current_company"))
+    if title or company:
+        parts.append(f"{title} at {company}".strip() if company else title)
+
+    industry = _as_clean_str(profile.get("current_industry"))
+    if industry:
+        parts.append(industry)
+
+    skills = record.get("skills")
+    if isinstance(skills, list) and skills:
+        names = _join_nonempty(
+            s.get("name") if isinstance(s, dict) else s for s in skills)
+        if names:
+            parts.append("Skills: " + names)
+
+    summary = _as_clean_str(profile.get("summary"))
+    if summary:
+        parts.append(summary)
+
+    history = record.get("career_history")
+    if isinstance(history, list) and history:
+        titles = _join_nonempty(
+            h.get("title") for h in history if isinstance(h, dict))
+        if titles:
+            parts.append("Experience: " + titles)
+        descs = _join_nonempty(
+            (h.get("description") for h in history if isinstance(h, dict)), sep=" ")
+        if descs:
+            parts.append(descs)
+
+    education = record.get("education")
+    if isinstance(education, list) and education:
+        fields = _join_nonempty(
+            (e.get("field_of_study") or e.get("degree")) for e in education
+            if isinstance(e, dict))
+        if fields:
+            parts.append("Education: " + fields)
+
+    return " | ".join(parts)[:EMBED_MAX_CHARS]
 
 
 def iter_records_with_offsets(plain_path: str) -> Iterator[Tuple[int, str, str]]:
@@ -302,12 +366,20 @@ def iter_records_with_offsets(plain_path: str) -> Iterator[Tuple[int, str, str]]
                 log(f"WARN skipping malformed line at offset={offset}: {exc}")
                 offset += line_len
                 continue
-            cid = record.get(ID_FIELD)
-            if cid is None:
-                log(f"WARN skipping line missing '{ID_FIELD}' at offset={offset}")
+            try:
+                if not isinstance(record, dict):
+                    raise TypeError(f"record is {type(record).__name__}, not object")
+                cid = record.get(ID_FIELD)
+                if cid is None:
+                    log(f"WARN skipping line missing '{ID_FIELD}' at offset={offset}")
+                    offset += line_len
+                    continue
+                text = build_text(record)
+            except Exception as exc:  # one bad record must never kill the shard
+                log(f"WARN skipping unprocessable record at offset={offset}: {exc}")
                 offset += line_len
                 continue
-            yield offset, str(cid), build_text(record)
+            yield offset, str(cid), text
             offset += line_len
 
 
