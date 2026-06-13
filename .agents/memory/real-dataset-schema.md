@@ -40,11 +40,21 @@ the whole build.
 `build_text`, not by appending flat names to `TEXT_FIELDS` (that tuple is now
 documentary only).
 
-## NOT yet reconciled
-Phase 2 (rerank feature extraction) and Phase 3 (reasoning grounding) still assume
-the mock schema (e.g. they reference flat company/signal fields). Before a full
-ranking run is correct on real data, their extractors must be pointed at
-`redrob_signals.*`, `career_history[]`, `skills[]`, etc.
+## Reconciled (phase1 + phase2 + phase3)
+All three stages now read the real nested schema. Phase 3 holds the canonical
+schema accessors (`profile_of`/`signals_of`/`skill_names`/`current_title`/
+`experience_years`/`github_score`); Phase 2 imports them so the renderer and the
+grounding validator can never disagree. Key real-data quirks baked in:
+- `years_of_experience` lives in `profile`; job-hopper uses mean
+  `career_history[].duration_months` (not a flat total).
+- `skill_assessment_scores` is a dict topic->float 0-100 (NOT level strings); the
+  fake-expert honeypot keys on score>=90 + zero experience.
+- `github_activity_score` uses a negative value (-1) as a "no data" sentinel —
+  `github_score()` returns None for it so reasoning never emits "-1.00", and
+  engagement rates clamp negatives to 0.
+- JD parsing: `phase2_ranker.load_jd_text` handles `.docx` via stdlib only
+  (zipfile + ElementTree), so it works under the ranking air-gap (no dependency).
+**Why:** these are dataset-specific traps not derivable from the field names alone.
 
 ## Stale-artifact caveat
 The phase1 shard `.ok` marker keys on (byte-range, model, count) — NOT on input

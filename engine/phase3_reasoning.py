@@ -63,6 +63,75 @@ def _get_path(record: dict, *keys):
 
 
 # ---------------------------------------------------------------------------
+# Real-schema accessors (single source of truth for nested field paths, so the
+# renderer and the grounding validator can never disagree, Design.md s2 / R2)
+# ---------------------------------------------------------------------------
+
+def profile_of(record: dict) -> dict:
+    p = record.get("profile")
+    return p if isinstance(p, dict) else {}
+
+
+def signals_of(record: dict) -> dict:
+    s = record.get("redrob_signals")
+    return s if isinstance(s, dict) else {}
+
+
+def skill_names(record: dict) -> List[str]:
+    """The candidate's declared skill names (real schema: ``skills[].name``)."""
+    names: List[str] = []
+    for s in record.get("skills") or []:
+        name = s.get("name") if isinstance(s, dict) else s
+        if name is not None and str(name).strip():
+            names.append(str(name).strip())
+    return names
+
+
+def current_title(record: dict):
+    return profile_of(record).get("current_title")
+
+
+def github_score(record: dict) -> Optional[float]:
+    """``redrob_signals.github_activity_score`` if it is a *real* score.
+
+    The dataset uses a negative value (e.g. ``-1``) as a "no GitHub data"
+    sentinel; we return ``None`` for those so the reasoning never surfaces a
+    nonsensical / misleading metric (R2).
+    """
+    v = signals_of(record).get("github_activity_score")
+    return float(v) if isinstance(v, (int, float)) and v >= 0 else None
+
+
+def _total_tenure_months(record: dict) -> Optional[int]:
+    hist = record.get("career_history")
+    if not isinstance(hist, list):
+        return None
+    total = 0
+    seen = False
+    for h in hist:
+        dm = h.get("duration_months") if isinstance(h, dict) else None
+        if isinstance(dm, (int, float)) and dm >= 0:
+            total += int(dm)
+            seen = True
+    return total if seen else None
+
+
+def experience_years(record: dict) -> Optional[float]:
+    """Total professional experience in years.
+
+    Prefers the candidate's stated ``profile.years_of_experience`` (an explicit,
+    grounded field); falls back to summing ``career_history[].duration_months``.
+    Used by BOTH the renderer and the digit-grounding validator so the displayed
+    number is always traceable to the record (no hallucination, R2).
+    """
+    yoe = profile_of(record).get("years_of_experience")
+    if isinstance(yoe, (int, float)) and yoe >= 0:
+        return float(yoe)
+    months = _total_tenure_months(record)
+    return (months / 12.0) if months is not None else None
+
+
+# ---------------------------------------------------------------------------
 # AST node types
 # ---------------------------------------------------------------------------
 
@@ -153,18 +222,17 @@ class Choice(Node):
 # ---------------------------------------------------------------------------
 
 def _years(prefix: str = "", suffix: str = "") -> Field:
-    return Field(lambda ctx: ctx["record"].get("total_experience_years"),
+    return Field(lambda ctx: experience_years(ctx["record"]),
                  lambda v: f"{prefix}{_fmt_years(v)}{suffix}")
 
 
 def _title(prefix: str = "", suffix: str = "") -> Field:
-    return Field(lambda ctx: ctx["record"].get("current_title"),
+    return Field(lambda ctx: current_title(ctx["record"]),
                  lambda v: f"{prefix}{str(v).strip()}{suffix}")
 
 
-def _github(prefix: str = ", GitHub contribution ") -> Field:
-    return Field(lambda ctx: _get_path(ctx["record"], "redrob_signals",
-                                       "github_contribution_score"),
+def _github(prefix: str = ", GitHub activity ") -> Field:
+    return Field(lambda ctx: github_score(ctx["record"]),
                  lambda v: f"{prefix}{_fmt_github(v)}")
 
 
@@ -241,9 +309,8 @@ def match_skills(record: dict, jd_text: str) -> List[str]:
     """
     jd_lower = (jd_text or "").lower()
     out: List[str] = []
-    for s in record.get("skills") or []:
-        s_str = str(s).strip()
-        if s_str and s_str.lower() in jd_lower:
+    for s_str in skill_names(record):
+        if s_str.lower() in jd_lower:
             out.append(s_str)
     return out
 
@@ -251,24 +318,24 @@ def match_skills(record: dict, jd_text: str) -> List[str]:
 def _allowed_digit_tokens(record: dict) -> set:
     """Digit tokens that may legitimately appear in the reasoning."""
     tokens: set = set()
-    exp = record.get("total_experience_years")
+    exp = experience_years(record)
     if isinstance(exp, (int, float)):
         tokens.update(re.findall(r"\d+", _fmt_years(exp)))
     notice = record.get("notice_period_days")
     if notice is None:
-        notice = _get_path(record, "redrob_signals", "notice_period_days")
+        notice = signals_of(record).get("notice_period_days")
     if isinstance(notice, (int, float)):
         tokens.update(re.findall(r"\d+", _fmt_notice(notice)))
-    gh = _get_path(record, "redrob_signals", "github_contribution_score")
+    gh = github_score(record)
     if isinstance(gh, (int, float)):
         tokens.update(re.findall(r"\d+", _fmt_github(gh)))
     # Digits inside grounded text the engine may emit verbatim (e.g. a title like
     # "SDE-2" or a skill like "C++20") are legitimate and must not trip the check.
-    title = record.get("current_title")
+    title = current_title(record)
     if isinstance(title, str):
         tokens.update(re.findall(r"\d+", title))
-    for s in record.get("skills") or []:
-        tokens.update(re.findall(r"\d+", str(s)))
+    for s in skill_names(record):
+        tokens.update(re.findall(r"\d+", s))
     return tokens
 
 
@@ -284,7 +351,7 @@ def _is_grounded(text: str, record: dict, matched_skills: List[str]) -> bool:
     for num in re.findall(r"\d+", text):
         if num not in allowed:
             return False
-    own = {str(s).strip().lower() for s in (record.get("skills") or [])}
+    own = {s.lower() for s in skill_names(record)}
     for s in matched_skills:
         if s.strip().lower() not in own:
             return False

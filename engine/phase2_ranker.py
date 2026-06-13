@@ -37,14 +37,20 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 import time
+import xml.etree.ElementTree as ET
+import zipfile
 from typing import Dict, List, Optional, Tuple
 
 try:  # works whether run as a script (engine/) or imported as engine.phase2_ranker
-    from phase3_reasoning import build_reasoning, match_skills
+    from phase3_reasoning import (build_reasoning, match_skills, skill_names,
+                                  profile_of, signals_of, experience_years)
 except ImportError:  # pragma: no cover
-    from engine.phase3_reasoning import build_reasoning, match_skills
+    from engine.phase3_reasoning import (build_reasoning, match_skills,
+                                         skill_names, profile_of, signals_of,
+                                         experience_years)
 
 # ---------------------------------------------------------------------------
 # Configuration (single source of truth - no magic numbers, Rules.md spirit)
@@ -72,6 +78,10 @@ JOB_HOPPER_MULTIPLIER = 0.5
 JOB_HOPPER_TENURE_THRESHOLD = 1.5      # years per company
 NOTICE_FREE_DAYS = 30                   # <= this -> no notice penalty
 NOTICE_DECAY_PER_30D = 0.15            # subtracted per extra 30-day block
+
+# Honeypot thresholds (real-schema traps, kept conservative to avoid false drops).
+OVERLAP_TENURE_RATIO = 1.5     # summed tenure > calendar span * this -> impossible
+EXPERT_SCORE_THRESHOLD = 90.0  # skill_assessment_scores value >= this == "expert"
 
 # Phase-3 placeholder for the reasoning column.
 REASONING_PLACEHOLDER = "AST generation pending Phase 3"
@@ -185,45 +195,107 @@ def load_record(plain_jsonl_path: str, fh, byte_offset: int) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 def _companies(record: dict) -> List[str]:
-    hist = record.get("employment_history") or []
-    names = []
-    for e in hist:
+    """Employer names from the real ``career_history`` list."""
+    names: List[str] = []
+    for e in record.get("career_history") or []:
         if isinstance(e, dict) and e.get("company"):
             names.append(str(e["company"]))
-        elif isinstance(e, str):
-            names.append(e)
     return names
+
+
+def _parse_month_index(date_str) -> Optional[int]:
+    """``YYYY-MM[-DD]`` -> integer month index (year*12 + month-1); else ``None``."""
+    if not isinstance(date_str, str):
+        return None
+    m = re.match(r"\s*(\d{4})-(\d{1,2})", date_str)
+    if not m:
+        return None
+    year, month = int(m.group(1)), int(m.group(2))
+    if not 1 <= month <= 12:
+        return None
+    return year * 12 + (month - 1)
+
+
+def _career_span_and_tenure_months(record: dict) -> Tuple[Optional[int], Optional[int]]:
+    """Return ``(calendar_span_months, total_tenure_months)`` from career_history.
+
+    ``span`` runs from the earliest start to the latest end; ongoing roles imply
+    their end from ``start + duration_months`` so no wall-clock "today" is needed
+    (keeps ranking deterministic and offline). ``tenure`` sums all
+    ``duration_months``. Tenure far exceeding span means impossible concurrent
+    full-time roles -> a fabricated profile.
+    """
+    hist = record.get("career_history")
+    if not isinstance(hist, list) or not hist:
+        return None, None
+    starts: List[int] = []
+    ends: List[int] = []
+    tenure = 0
+    saw_tenure = False
+    for h in hist:
+        if not isinstance(h, dict):
+            continue
+        dm = h.get("duration_months")
+        if isinstance(dm, (int, float)) and dm >= 0:
+            tenure += int(dm)
+            saw_tenure = True
+        start = _parse_month_index(h.get("start_date"))
+        if start is None:
+            continue
+        starts.append(start)
+        end = _parse_month_index(h.get("end_date"))
+        if end is None:  # ongoing / current -> imply end from duration
+            end = start + (int(dm) if isinstance(dm, (int, float)) and dm >= 0 else 0)
+        ends.append(end)
+    span = (max(ends) - min(starts)) if starts and ends else None
+    return span, (tenure if saw_tenure else None)
+
+
+def _mean_tenure_years(record: dict) -> Optional[float]:
+    """Average months-per-company / 12 from ``career_history`` (job-hopper signal)."""
+    hist = record.get("career_history")
+    if not isinstance(hist, list):
+        return None
+    months = [int(h["duration_months"]) for h in hist
+              if isinstance(h, dict)
+              and isinstance(h.get("duration_months"), (int, float))
+              and h["duration_months"] >= 0]
+    if not months:
+        return None
+    return (sum(months) / len(months)) / 12.0
 
 
 def detect_honeypot(record: dict) -> Optional[str]:
     """Return a reason string if the candidate is a honeypot, else ``None``.
 
-    Tripping any rule means immediate disqualification (Tier 0 / score 0, R4).
+    Reconciled to the REAL nested schema. Tripping any rule means immediate
+    disqualification (Tier 0 / score 0, R4). Every check is grounded in fields
+    that actually exist in the dataset and kept conservative so genuine
+    candidates are not wrongly dropped (a false drop hurts NDCG).
     """
-    # 1. Overlapping timelines: claimed experience exceeds the company's age.
-    total_exp = record.get("total_experience_years")
-    company_age = record.get("current_company_age_years")
-    if isinstance(total_exp, (int, float)) and isinstance(company_age, (int, float)):
-        if total_exp > company_age:
-            return "overlapping_timeline"
+    profile = profile_of(record)
+    signals = signals_of(record)
+    exp = experience_years(record)
 
-    # 2. Fake expert: an "expert" skill assessment with zero real experience.
-    assessments = record.get("skill_assessment_scores") or {}
-    has_expert = False
+    # 1. Overlapping timeline: summed tenure impossibly exceeds the real calendar
+    #    span of the career history (fabricated, concurrent full-time roles).
+    span, tenure = _career_span_and_tenure_months(record)
+    if (span is not None and tenure is not None and span > 0
+            and tenure > span * OVERLAP_TENURE_RATIO):
+        return "overlapping_timeline"
+
+    # 2. Fake expert: an expert-level assessment score with zero real experience.
+    assessments = signals.get("skill_assessment_scores")
     if isinstance(assessments, dict):
-        has_expert = any(str(v).strip().lower() == "expert" for v in assessments.values())
-    elif isinstance(assessments, list):
-        has_expert = any(
-            str((a or {}).get("level", "")).strip().lower() == "expert"
-            for a in assessments if isinstance(a, dict)
-        )
-    if has_expert and isinstance(total_exp, (int, float)) and total_exp == 0:
-        return "fake_expert"
+        has_expert = any(isinstance(v, (int, float)) and v >= EXPERT_SCORE_THRESHOLD
+                         for v in assessments.values())
+        if has_expert and isinstance(exp, (int, float)) and exp == 0:
+            return "fake_expert"
 
-    # 3. Title mismatch trap: non-technical title but AI-engineering skills.
-    title = str(record.get("current_title", "")).lower()
+    # 3. Title mismatch trap: non-technical current title but AI-engineering skills.
+    title = str(profile.get("current_title") or "").lower()
     if any(tok in title for tok in NON_TECH_TITLE_TOKENS):
-        skills_lc = {str(s).strip().lower() for s in (record.get("skills") or [])}
+        skills_lc = {s.lower() for s in skill_names(record)}
         if skills_lc & AI_KEYWORDS:
             return "title_mismatch"
 
@@ -233,14 +305,6 @@ def detect_honeypot(record: dict) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # NDCG@10 multipliers - Phase 2 request / TechSpec.md s6
 # ---------------------------------------------------------------------------
-
-def _num_companies(record: dict) -> int:
-    n = len(_companies(record))
-    if n:
-        return n
-    val = record.get("num_companies")
-    return int(val) if isinstance(val, (int, float)) and val > 0 else 0
-
 
 def compute_multiplier(record: dict) -> Tuple[float, Dict[str, float]]:
     """Combine all JD-specific multipliers into one factor on the base score.
@@ -258,34 +322,30 @@ def compute_multiplier(record: dict) -> Tuple[float, Dict[str, float]]:
             consulting_mult = CONSULTING_LIFER_MULTIPLIER
     breakdown["consulting"] = consulting_mult
 
-    # --- Job hopper: avg tenure (total exp / #companies) < 1.5 years ---
+    # --- Job hopper: average tenure per company (from career_history dates) ---
     hopper_mult = 1.0
-    total_exp = record.get("total_experience_years")
-    n_companies = _num_companies(record)
-    if isinstance(total_exp, (int, float)) and n_companies > 0:
-        if (total_exp / n_companies) < JOB_HOPPER_TENURE_THRESHOLD:
-            hopper_mult = JOB_HOPPER_MULTIPLIER
+    mean_tenure = _mean_tenure_years(record)
+    if mean_tenure is not None and mean_tenure < JOB_HOPPER_TENURE_THRESHOLD:
+        hopper_mult = JOB_HOPPER_MULTIPLIER
     breakdown["hopper"] = hopper_mult
 
     # --- Notice period decay: 1.0 up to 30 days, -0.15 per extra 30-day block ---
-    # Accept either a top-level field or one nested under redrob_signals.
     notice_mult = 1.0
-    signals_early = record.get("redrob_signals") or {}
-    notice = record.get("notice_period_days")
-    if notice is None:
-        notice = signals_early.get("notice_period_days")
+    signals = signals_of(record)
+    notice = signals.get("notice_period_days", record.get("notice_period_days"))
     if isinstance(notice, (int, float)) and notice > NOTICE_FREE_DAYS:
-        extra_blocks = (notice - NOTICE_FREE_DAYS + 29) // 30  # ceil to 30d blocks
+        extra_blocks = (int(notice) - NOTICE_FREE_DAYS + 29) // 30  # ceil to 30d blocks
         notice_mult = max(0.0, 1.0 - NOTICE_DECAY_PER_30D * extra_blocks)
     breakdown["notice"] = notice_mult
 
     # --- Engagement boost: 1 + response_rate * completion_rate (in [1, 2]) ---
-    signals = record.get("redrob_signals") or {}
-    rr = signals.get("recruiter_response_rate", record.get("recruiter_response_rate", 0))
-    ic = signals.get("interview_completion_rate", record.get("interview_completion_rate", 0))
-    rr = float(rr) if isinstance(rr, (int, float)) else 0.0
-    ic = float(ic) if isinstance(ic, (int, float)) else 0.0
-    engagement_mult = 1.0 + (rr * ic)
+    # Rates are in [0,1]; negatives are "no data" sentinels. Clamp both ways so a
+    # sentinel gives no boost and out-of-range upstream data can't inflate the band.
+    rr = signals.get("recruiter_response_rate", 0)
+    ic = signals.get("interview_completion_rate", 0)
+    rr = min(1.0, float(rr)) if isinstance(rr, (int, float)) and rr > 0 else 0.0
+    ic = min(1.0, float(ic)) if isinstance(ic, (int, float)) and ic > 0 else 0.0
+    engagement_mult = 1.0 + (rr * ic)  # in [1, 2]
     breakdown["engagement"] = engagement_mult
 
     total = consulting_mult * hopper_mult * notice_mult * engagement_mult
@@ -335,9 +395,8 @@ def rank(artifacts_dir: str, jd_text: str, k: int, top_n: int, debug: bool
 
             multiplier, breakdown = compute_multiplier(record)
             final_score = base_score * multiplier
-            notice_days = record.get("notice_period_days")
-            if notice_days is None:
-                notice_days = (record.get("redrob_signals") or {}).get("notice_period_days")
+            notice_days = signals_of(record).get("notice_period_days",
+                                                 record.get("notice_period_days"))
             scored.append({
                 "candidate_id": cid,
                 "score": final_score,
@@ -395,6 +454,43 @@ def write_csv(rows: List[dict], out_path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Job-description loading (supports .docx via stdlib only - no extra dependency)
+# ---------------------------------------------------------------------------
+
+_DOCX_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def extract_docx_text(path: str) -> str:
+    """Extract plain text from a ``.docx`` using ONLY the stdlib.
+
+    A ``.docx`` is a zip whose body is ``word/document.xml``. We read the text of
+    every ``<w:t>`` run and join runs per ``<w:p>`` paragraph with newlines. No
+    third-party library is needed, so this also works under the ranking air-gap
+    (Rules.md R5/R6) - the JD parse never touches the network.
+    """
+    with zipfile.ZipFile(path) as z:
+        xml = z.read("word/document.xml")
+    root = ET.fromstring(xml)
+    lines: List[str] = []
+    for para in root.iter(f"{_DOCX_NS}p"):
+        runs = [node.text for node in para.iter(f"{_DOCX_NS}t") if node.text]
+        line = "".join(runs).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def load_jd_text(path: str) -> str:
+    """Load JD text from a ``.docx`` (Word) or a plain-text file."""
+    if path.lower().endswith(".docx"):
+        text = extract_docx_text(path)
+    else:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+    return text.strip()
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -422,8 +518,12 @@ def main(argv: List[str]) -> int:
         if not os.path.exists(args.jd_file):
             log(f"ERROR JD file not found: {args.jd_file}")
             return 2
-        with open(args.jd_file, "r", encoding="utf-8") as f:
-            jd_text = f.read().strip()
+        try:
+            jd_text = load_jd_text(args.jd_file)
+        except Exception as exc:  # noqa: BLE001 - surface any parse failure loudly
+            log(f"ERROR could not read JD file {args.jd_file}: {exc}")
+            return 2
+        log(f"loaded JD from {args.jd_file} ({len(jd_text)} chars)")
     elif args.jd:
         jd_text = args.jd.strip()
     else:
