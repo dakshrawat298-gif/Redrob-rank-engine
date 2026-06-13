@@ -129,11 +129,21 @@ false-drop risk and is called out explicitly.
 
 ## Fix #4 — Soften the job-hopper multiplier (R3 tradeoff)
 
-**Change.** `JOB_HOPPER_MULTIPLIER` `0.5 → 0.8`.
+**Change.** `JOB_HOPPER_MULTIPLIER` `0.5 → 0.85` (plan originally proposed 0.8;
+recalibrated — see below).
 
 **Rationale.** The 0.5× penalty is aggressive enough to bury otherwise-strong
-hoppers far below the cutoff. 0.8× still penalizes (R3 "penalize job
-hoppers") but less severely, letting strong-but-mobile candidates compete.
+hoppers far below the cutoff. A softer penalty still penalizes (R3 "penalize job
+hoppers") but lets strong-but-mobile candidates compete.
+
+**Calibration (deviation from plan).** With 0.8× the strongest surviving hopper
+still landed at rank ~108 — just below the Top-100 cutoff — so the acceptance
+criterion "at least one genuine hopper in the Top-100 carrying the visible
+`candidate shows frequent job transitions` clause" was NOT met. Simulating over
+the real survivor set, 0.84× is the minimum that surfaces one hopper; **0.85×**
+was chosen as a clean value (still a 15% penalty) that yields exactly one true
+hopper in the Top-100. R3 is preserved (penalty applied + logged; flag always
+surfaced).
 
 **Invariant check (R3).** This is an explicit, documented **softening** of an
 R3 penalty, not its removal — penalties still apply and remain logged. The
