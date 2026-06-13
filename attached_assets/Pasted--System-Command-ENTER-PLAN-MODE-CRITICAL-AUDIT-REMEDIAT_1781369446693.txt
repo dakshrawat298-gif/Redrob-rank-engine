@@ -1,0 +1,17 @@
+[System Command: ENTER PLAN MODE - CRITICAL AUDIT REMEDIATION]
+
+Context: We just received a brutal Stage 4 architectural audit from NotebookLM. The current codebase has critical vulnerabilities that will cause immediate disqualification (OOM leaks, Score Bound violations, Trap Keyword Hallucinations, and Honeypot math slippage). 
+
+Task: DO NOT WRITE ANY EXECUTABLE PYTHON CODE YET. Your objective is to create a detailed remediation document named `Remediation_Plan.md`. 
+
+You must design a flawless, mathematical, and architectural fix for each of the following 7 Critical Vulnerabilities:
+
+1. SCORE OUT OF BOUNDS: Explain how you will enforce a strict `min(raw_score, 1.0)` clamp in `phase2_ranker.py` and update `validate_submission.py` to strictly check the [0.0, 1.0] boundary.
+2. RAM DEATH TRAP (Pass 2): We are violating our 16GB limit by appending 1,000 full JSON objects into a list. Explain exactly how you will implement a `heapq` (Max-Heap of size 100) to keep only the top 100 scores in memory while streaming the rest.
+3. HONEYPOT MATH SLIPPAGE: The `experience == 0` check is too weak. Explain your new logic to drop candidates with `< 0.5` years of experience claiming expert skills, and how you will tighten the overlapping tenure ratio.
+4. AIR-GAP ABORT: Explain how you will completely lock down `fastembed` so it NEVER attempts a background ONNX/tokenizer network ping when `network_air_gap` is active.
+5. TRAP-KEYWORD HALLUCINATION (The Biggest Threat): Explain how you will hardcode a strict Deny-List in `match_skills` (e.g., "Marketing", "Sales", "HR"). Even if these words are in the JD, they MUST NEVER be surfaced in the AST reasoning as positive skills.
+6. SCHEMA KEY MISMATCH: Confirm the correction of `github_activity_score` to `github_contribution_score` across all files.
+7. JOB HOPPER REASONING FAIL: The 0.5x penalty obliterates candidates before the reasoning engine can append the honest concern. Explain your logical fix (e.g., reducing the penalty slightly to 0.8x, or restructuring the pipeline so the flag is properly surfaced in the final CSV for those who barely survive).
+
+Output: Generate `Remediation_Plan.md`. Stop and wait for my explicit approval before modifying any Python files. I will audit your proposed logic first.
