@@ -18,3 +18,9 @@ id = "ucV-O5NleOfi09Vl9JrpO"
 uri = "file://NotebookLM_Master_Codebase_v2.txt"
 type = "text"
 title = "NotebookLM Master Codebase V2 — Redrob Rank Engine"
+
+[[outputs]]
+id = "e4_oIS7PdpVy4-D18XSFf"
+uri = "file://NotebookLM_Master_Codebase_V3.txt"
+type = "text"
+title = "NotebookLM Master Codebase V3 (Final Audit Bundle)"
