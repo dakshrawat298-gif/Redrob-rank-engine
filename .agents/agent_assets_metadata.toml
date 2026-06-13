@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "bY4NY85QS11fIj4ew2tcP"
+uri = "file://team_vibecoder.csv"
+type = "table"
+title = "team_vibecoder.csv — Top 100 ranked candidates"
