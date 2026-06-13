@@ -364,17 +364,24 @@ def detect_honeypot(record: dict) -> Optional[str]:
     # 1. Overlapping timeline: summed tenure impossibly exceeds the real calendar
     #    span of the career history (fabricated, concurrent full-time roles).
     span, tenure = _career_span_and_tenure_months(record)
-    if (span is not None and tenure is not None and span > 0
-            and tenure > span * OVERLAP_TENURE_RATIO):
+    # Zero-Span honeypot (V4): a present span of 0 means career_history carries
+    # dates that collapse to an impossible zero-month window — itself a fabrication
+    # signal. Clamp it to 1 month (effective_span) so the ratio checks below still
+    # fire. ``span is None`` (no parseable dates at all) stays a genuine no-data
+    # skip so we never false-drop a candidate for missing data (R10 spirit).
+    effective_span = max(span, 1) if span is not None else None
+    if (effective_span is not None and tenure is not None
+            and tenure > effective_span * OVERLAP_TENURE_RATIO):
         return "overlapping_timeline"
 
     # 1b. Experience inflation: claimed years_of_experience implausibly exceeds
     #     the real calendar span of career_history (fabricated seniority, Fix #3).
-    #     Null-safe — skips unless BOTH the claim and a positive span are present.
+    #     Null-safe — skips unless BOTH the claim and a parseable span are present;
+    #     a present-but-zero span is treated as 1 month via effective_span (V4).
     yoe_claim = profile.get("years_of_experience")
     if (isinstance(yoe_claim, (int, float)) and yoe_claim >= 0
-            and span is not None and span > 0
-            and yoe_claim * 12 > span * EXPERIENCE_INFLATION_RATIO):
+            and effective_span is not None
+            and yoe_claim * 12 > effective_span * EXPERIENCE_INFLATION_RATIO):
         return "experience_inflation"
 
     # 2. Fake expert: an expert-level assessment score with <0.5y real experience.

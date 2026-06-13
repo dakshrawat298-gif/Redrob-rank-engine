@@ -412,15 +412,21 @@ def _allowed_digit_tokens(record: dict) -> set:
     return tokens
 
 
-def _is_grounded(text: str, record: dict, matched_skills: List[str]) -> bool:
+def _is_grounded(text: str, record: dict, matched_skills: List[str],
+                 extra_allowed: Optional[set] = None) -> bool:
     """Fail-closed traceability check (Design.md s2 / R2).
 
     Rejects unresolved placeholders and any number not derivable from the record.
     Skills are grounded by construction (``match_skills`` returns a subset).
+    ``extra_allowed`` whitelists additional grounded digit tokens (e.g. the
+    candidate_id digits used by the last-resort collision failsafe, since the id
+    is itself a present field of the record).
     """
     if "{" in text or "}" in text:
         return False
     allowed = _allowed_digit_tokens(record)
+    if extra_allowed:
+        allowed = allowed | extra_allowed
     for num in re.findall(r"\d+", text):
         if num not in allowed:
             return False
@@ -534,6 +540,22 @@ def _resolve_collision(row: dict, rank: int, used: set) -> str:
                     and _is_grounded(cand, record, ms)):
                 return cand
 
+    # Last-resort failsafe (V4): the pool and title variants are exhausted. The
+    # candidate_id is globally unique, so appending it guarantees a unique string
+    # without crashing. Its digit tokens are whitelisted (the id is itself a
+    # present field of the record) so the result still passes the R2 grounding
+    # check. This converts a previously hard RuntimeError into a real, grounded
+    # failsafe — preferring a unique grounded row (R9) over a run-killing crash.
+    id_digits = set(re.findall(r"\d+", cid))
+    for off in range(len(FALLBACK_POOL)):
+        base = f"{FALLBACK_POOL[(start + off) % len(FALLBACK_POOL)]} (ref {cid})"
+        cand = _tidy(base + concern + ".")
+        if (len(cand) <= MAX_CHARS and cand not in used
+                and _is_grounded(cand, record, ms, extra_allowed=id_digits)):
+            return cand
+
+    # Truly impossible (every variant over the char budget): fail loud per R10
+    # rather than emit a duplicate or an ungrounded string.
     raise RuntimeError(f"could not generate a unique reasoning for {cid} (R10)")
 
 
