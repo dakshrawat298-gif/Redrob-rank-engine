@@ -1,32 +1,38 @@
 kind = "api"
-previewPath = "/api" # TODO - should be excluded from preview in the first place
-title = "API Server"
+previewPath = "/"
+title = "India Runs AI — Sandbox"
 version = "1.0.0"
 id = "3B4_FFSkEVBkAeYMFRJ2e"
 
 [[services]]
 localPort = 8080
-name = "API Server"
-paths = ["/api"]
+name = "Sandbox UI"
+paths = ["/"]
+
+[services.env]
+PORT = "8080"
 
 [services.development]
-run = "pnpm --filter @workspace/api-server run dev"
-
-[services.production]
-
-[services.production.build]
-args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
-
-[services.production.build.env]
-NODE_ENV = "production"
+run = "streamlit run ../../app.py --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false --server.port 8080"
 
 [services.production.run]
-# we don't run through pnpm to make startup faster in production
-args = ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
+args = [
+  "streamlit",
+  "run",
+  "app.py",
+  "--server.address",
+  "0.0.0.0",
+  "--server.headless",
+  "true",
+  "--server.enableCORS=false",
+  "--server.enableXsrfProtection=false",
+  "--server.enableWebsocketCompression=false",
+  "--server.port",
+  "8080",
+]
 
 [services.production.run.env]
 PORT = "8080"
-NODE_ENV = "production"
 
 [services.production.health.startup]
-path = "/api/healthz"
+path = "/"

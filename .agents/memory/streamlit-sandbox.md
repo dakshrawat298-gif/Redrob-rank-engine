@@ -1,28 +1,53 @@
 ---
-name: Streamlit in this pnpm monorepo
-description: How to run a Streamlit app here given there is no Python artifact type.
+name: Streamlit in this pnpm monorepo (dev + deploy)
+description: How to run AND publicly deploy a Streamlit app here given there is no Python artifact type.
 ---
 
 # Streamlit sandbox UI
 
-This is a pnpm/Node monorepo with path-based artifact routing, but `createArtifact`
-offers NO python/streamlit type (only expo, data-visualization, mockup-sandbox,
-react-vite, slides, video-js). So a Streamlit app is NOT an artifact.
+pnpm/Node monorepo with path-based artifact routing. `createArtifact` has NO
+python/streamlit type (only expo, data-visualization, mockup-sandbox, react-vite,
+slides, video-js), so Streamlit cannot be its own artifact.
 
-**How it's wired (Sandbox UI for Redrob Rule 10.5):**
-- `app.py` lives at repo root and reads `team_vibecoder.csv` (relative to the script
-  dir, not CWD, so the workflow can launch from anywhere).
-- `.streamlit/config.toml`: headless, address 0.0.0.0, port 5000, `enableCORS=false`,
-  `enableXsrfProtection=false` (required so the proxied iframe preview works).
-- Run as a standalone webview workflow named "Streamlit Sandbox":
-  `streamlit run app.py --server.port 5000 --server.address 0.0.0.0`
-  (port 5000 is in the workflow tool's supported-port list).
+## App wiring
+- `app.py` at repo root reads `team_vibecoder.csv` relative to the SCRIPT dir
+  (`os.path.abspath(__file__)`), not CWD — so it loads no matter the launch CWD.
+- `.streamlit/config.toml`: headless, address 0.0.0.0, `enableCORS=false`,
+  `enableXsrfProtection=false` (required so the proxied iframe preview / router works).
+- Streamlit 1.58: `use_container_width` deprecated → use `width="stretch"`.
 
-**Gotchas:**
-- `configureWorkflow` may report "failed to start" on the very first attempt
-  (port-open race); a `restart_workflow` after it succeeds.
-- `screenshot type=app_preview` does NOT work for this — it only accepts registered
-  artifact dirs. Verify with `curl -s -o /dev/null -w "%{http_code}" localhost:5000/`.
-- Streamlit 1.58: `use_container_width` is deprecated; use `width="stretch"`.
-- Deployment in `.replit` is configured for the Node/pnpm autoscale router, NOT
-  Streamlit — publishing the Streamlit app would need separate deployment config.
+## Public deployment (Redrob Rule 10.5 sandbox link) — the durable decision
+This project deploys via `router = "application"` in `.replit` (autoscale). In that
+mode **`.replit` `deployment.run` is IGNORED**; production is driven entirely by each
+artifact's `.replit-artifact/artifact.toml` `[services.<name>.production]`. There is
+NO `deployConfig()` callback in the code sandbox, and `.replit` cannot be edited
+directly (run/ports/services each have their own tool).
+
+**So: serve Streamlit by repurposing an existing artifact** rather than creating one.
+Here the unused `api-server` artifact (only a `/api/healthz` scaffold) was pointed at
+Streamlit, served at `paths = ["/"]`:
+- Edit `artifact.toml` ONLY via `verifyAndReplaceArtifactToml` (temp-file flow).
+  - `verifyAndReplaceArtifactToml` CANNOT change `kind` — leave `kind = "api"`.
+- `[services.development].run` runs from the **artifact dir** (CWD = `artifacts/<x>`),
+  so reference the root app as `streamlit run ../../app.py ...`.
+- `[services.production.run].args` runs from the **repo root** (matches scaffold's
+  repo-root-relative paths), so reference it as `app.py`. This dev-vs-prod CWD
+  asymmetry is real; app.py's `__file__`-relative CSV load makes it CWD-proof anyway.
+- `[services.production.health.startup].path = "/"` (Streamlit `/` returns 200).
+- Use one localPort consistently (8080 here) with `[services.env] PORT` matching.
+
+**Python deps in production:** packages live in `.pythonlibs/bin` (Replit-managed,
+on PATH), NOT a uv `.venv`. Do NOT add a `uv sync` build step — it creates a
+conflicting `.venv`. Rely on Replit's standard python-module provisioning from
+`pyproject.toml`/`uv.lock`. If a publish build fails, the two signatures to check via
+`getDeploymentBuild` are `streamlit: command not found` (deps not provisioned) and
+`File does not exist: app.py` (prod CWD assumption wrong).
+
+## Gotchas
+- After repurposing the artifact, the OLD dev workflow's node process can linger and
+  hold the port → new workflow fails "Port 8080 is not available". `kill -9` the
+  stale `node ./dist/index.mjs` PIDs, then restart.
+- `screenshot type=app_preview` DOES work once the artifact serves "/"; a blank first
+  shot is just Streamlit's websocket render lag — re-shoot after it boots.
+- Deployment is user-initiated: configure, then `suggestDeploy()`. The `*.replit.app`
+  URL only exists AFTER the user clicks Publish (read `getDeploymentInfo().primaryUrl`).
