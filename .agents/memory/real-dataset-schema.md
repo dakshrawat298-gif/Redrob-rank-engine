@@ -61,3 +61,4 @@ The phase1 shard `.ok` marker keys on (byte-range, model, count) — NOT on inpu
 file identity/hash. A leftover shard from a different input with a matching range
 could be silently reused. Always clear `engine/data/` (gitignored) before building
 on a different input.
+- Audit/spec asked for a `current_company_age_years` field that does NOT exist in the real dataset; reframe such asks to existing fields (e.g. years_of_experience vs career_history span) instead of inventing the field.

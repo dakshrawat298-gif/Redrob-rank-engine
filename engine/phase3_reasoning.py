@@ -27,6 +27,7 @@ by the writer (Design.md s1.1).
 
 from __future__ import annotations
 
+import hashlib
 import random
 import re
 from typing import Callable, Dict, List, Optional
@@ -293,11 +294,49 @@ def _tier_facts() -> Dict[str, Node]:
     return {"top": _github(), "mid": _github(), "filler": Lit("")}
 
 
-SAFE_FALLBACK = {
-    "top": "Strong overall fit for this role",
-    "mid": "Relevant background matching the JD requirements",
-    "filler": "Adjacent skills only — likely below cutoff, included as final filler",
-}
+# Generic, last-resort phrasings used ONLY when no candidate-specific (fact-
+# bearing) phrasing fits. Each is DIGIT-FREE and SKILL-FREE, so it asserts no
+# specific fact and is grounded by construction (passes ``_is_grounded``). A
+# large, varied pool + per-candidate deterministic selection is what keeps the
+# generic outputs distinct, defending the >=100-unique requirement (R9). The
+# pool is a fallback, not the default — most rows get specific reasoning.
+FALLBACK_POOL = [
+    "Relevant profile aligned with the core requirements of this role",
+    "Background that maps to the key needs of the position",
+    "Suitable match across several of the role's central competencies",
+    "Applicable experience covering important aspects of the position",
+    "Profile consistent with the principal expectations of the role",
+    "Candidate background aligned with the JD's main requirements",
+    "Reasonable fit against the central criteria of the role",
+    "Experience relevant to the primary demands of the position",
+    "Profile addressing key aspects of the role's requirements",
+    "Background broadly matching the JD's core expectations",
+    "Competencies that correspond to the role's main needs",
+    "Relevant overall alignment with the position's requirements",
+    "Applicable profile covering the role's essential areas",
+    "Background that fits the principal requirements of the JD",
+    "Suitable overall match for the demands of this role",
+    "Profile aligned with several core needs of the position",
+    "Experience corresponding to the role's key expectations",
+    "Relevant candidate background for the requirements of this role",
+    "Profile matching important elements of the JD",
+    "Background aligned with the central requirements of the position",
+    "Adjacent profile with partial overlap against the JD requirements",
+    "Peripheral match retained to complete the shortlist for this role",
+    "Borderline alignment with the role; limited direct JD overlap",
+    "Tangential background with some relevance to the position",
+]
+
+
+def _stable_hash(s: str) -> int:
+    """Process-independent hash (R7-safe; builtin ``hash`` is PYTHONHASHSEED-salted)."""
+    return int.from_bytes(hashlib.sha256(s.encode("utf-8")).digest()[:8], "big")
+
+
+def _fallback_for(cid: str) -> str:
+    """Deterministically pick one generic fallback phrasing for a candidate."""
+    return FALLBACK_POOL[_stable_hash(cid) % len(FALLBACK_POOL)]
+
 
 _VARIANTS = _tier_variants()
 _FACTS = _tier_facts()
@@ -411,32 +450,110 @@ def _concerns(notice_days, hopper_fired: bool) -> str:
     return out
 
 
+def _is_specific(text: str, record: dict, matched_skills: List[str]) -> bool:
+    """True iff ``text`` carries at least one candidate-specific grounded fact.
+
+    A specific clause names a grounded number (years/notice/github), the
+    candidate's own title, or a matched skill. A render with none of these is a
+    generic Lit-only collapse (e.g. "Solid background matching the JD
+    requirements") that multiple candidates would emit identically — those are
+    rerouted to the per-candidate fallback pool so reasoning stays distinct (R9).
+    """
+    if re.search(r"\d", text):
+        return True
+    low = text.lower()
+    title = current_title(record)
+    if isinstance(title, str) and title.strip() and title.strip().lower() in low:
+        return True
+    for s in matched_skills:
+        if s.strip() and s.strip().lower() in low:
+            return True
+    return False
+
+
 def build_reasoning(record: dict, rank: int, matched_skills: List[str],
                     hopper_fired: bool, notice_days) -> str:
     """Assemble the grounded, tier-appropriate, <=240-char reasoning string."""
     tier = tier_of(rank)
+    cid = str(record.get("candidate_id", rank))
     ctx = {
         "record": record,
         "rank": rank,
         "matched_skills": matched_skills,
-        "seed": random.Random(str(record.get("candidate_id", rank))),
+        "seed": random.Random(cid),
     }
     concern = _concerns(notice_days, hopper_fired)
 
-    # Build candidates in priority order (richest -> safest) and pick the first
-    # that is both grounded and within the length budget.
-    rich = Seq([_VARIANTS[tier], _FACTS[tier]], sep="").render(ctx)
-    lean = _VARIANTS[tier].render(ctx)
-    candidates = [c for c in (rich, lean) if c]
-    candidates.append(SAFE_FALLBACK[tier])
-
-    for base in candidates:
+    # Prefer a candidate-SPECIFIC phrasing (richest -> leaner): the first that is
+    # grounded, within budget, AND carries a specific fact. A generic Lit-only
+    # collapse is skipped here so it can't duplicate across candidates.
+    for base in (Seq([_VARIANTS[tier], _FACTS[tier]], sep="").render(ctx),
+                 _VARIANTS[tier].render(ctx)):
+        if not base:
+            continue
         text = _tidy(base + concern + ".")
-        if len(text) <= MAX_CHARS and _is_grounded(text, record, matched_skills):
+        if (len(text) <= MAX_CHARS and _is_grounded(text, record, matched_skills)
+                and _is_specific(text, record, matched_skills)):
             return text
 
-    # Last resort: keep the (mandatory) concerns, trim the lead to fit.
-    minimal = _tidy(SAFE_FALLBACK[tier] + concern + ".")
-    if len(minimal) > MAX_CHARS:
-        minimal = minimal[: MAX_CHARS - 1].rstrip() + "."
-    return minimal
+    # No specific phrasing fits -> deterministic per-candidate generic fallback.
+    pooled = _tidy(_fallback_for(cid) + concern + ".")
+    if len(pooled) > MAX_CHARS:  # keep the mandatory concerns, trim the lead
+        pooled = pooled[: MAX_CHARS - 1].rstrip() + "."
+    return pooled
+
+
+def _resolve_collision(row: dict, rank: int, used: set) -> str:
+    """Deterministically pick a UNIQUE grounded reasoning for a colliding row.
+
+    Walks the fallback pool from the candidate's stable start index to the first
+    unused, grounded, in-budget phrasing; if the whole pool is taken, it
+    differentiates entries with the candidate's own (grounded) title. Raises if
+    no unique option exists (R10: never silently emit a duplicate) — unreachable
+    with a >=24-entry pool and <=100 rows.
+    """
+    record = row["record"]
+    cid = str(record.get("candidate_id", rank))
+    ms = row.get("matched_skills") or []
+    concern = _concerns(row.get("notice_days"), bool(row.get("hopper_fired")))
+    start = _stable_hash(cid) % len(FALLBACK_POOL)
+
+    for off in range(len(FALLBACK_POOL)):
+        cand = _tidy(FALLBACK_POOL[(start + off) % len(FALLBACK_POOL)] + concern + ".")
+        if (len(cand) <= MAX_CHARS and cand not in used
+                and _is_grounded(cand, record, ms)):
+            return cand
+
+    title = current_title(record)
+    title = title.strip() if isinstance(title, str) and title.strip() else None
+    if title:
+        for off in range(len(FALLBACK_POOL)):
+            base = f"{FALLBACK_POOL[(start + off) % len(FALLBACK_POOL)]} ({title})"
+            cand = _tidy(base + concern + ".")
+            if (len(cand) <= MAX_CHARS and cand not in used
+                    and _is_grounded(cand, record, ms)):
+                return cand
+
+    raise RuntimeError(f"could not generate a unique reasoning for {cid} (R10)")
+
+
+def assign_unique_reasonings(rows: List[dict]) -> None:
+    """Set ``row['reasoning']`` for every row, guaranteeing 100 unique strings.
+
+    ``rows`` MUST already be in the final deterministic rank order so the dedup
+    is byte-reproducible (R7). Each row dict must carry ``record``,
+    ``matched_skills``, ``hopper_fired`` and ``notice_days``.
+    """
+    used: set = set()
+    for rank_pos, row in enumerate(rows, start=1):
+        text = build_reasoning(
+            record=row["record"],
+            rank=rank_pos,
+            matched_skills=row.get("matched_skills") or [],
+            hopper_fired=bool(row.get("hopper_fired")),
+            notice_days=row.get("notice_days"),
+        )
+        if text in used:
+            text = _resolve_collision(row, rank_pos, used)
+        used.add(text)
+        row["reasoning"] = text

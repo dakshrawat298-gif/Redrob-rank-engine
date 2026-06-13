@@ -4,3 +4,4 @@
 - [Audit remediation verdicts](audit-remediation.md) — vet every audit finding against real data first; 2 of 7 were false; skill match needs word-boundary + trap deny-list.
 - [Air-gap offline lock](airgap-offline-lock.md) — make fastembed offline conditional on caller's HF_HUB_OFFLINE, never forced, or first-run download breaks (/tmp cache is ephemeral).
 - [Streamlit sandbox](streamlit-sandbox.md) — no python artifact type; serve+deploy app.py at "/" by repurposing an existing artifact's [services.production.run] (router="application" deploys artifacts, .replit ignored; no deployConfig).
+- [Determinism R7](determinism-r7.md) — never use builtin hash() for per-candidate selection (PYTHONHASHSEED-salted → non-reproducible CSV); use sha256 digest; verify by diff/md5 of two runs.

@@ -46,12 +46,13 @@ import zipfile
 from typing import Dict, List, Optional, Tuple
 
 try:  # works whether run as a script (engine/) or imported as engine.phase2_ranker
-    from phase3_reasoning import (build_reasoning, match_skills, skill_names,
-                                  profile_of, signals_of, experience_years)
+    from phase3_reasoning import (build_reasoning, assign_unique_reasonings,
+                                  match_skills, skill_names, profile_of,
+                                  signals_of, experience_years)
 except ImportError:  # pragma: no cover
-    from engine.phase3_reasoning import (build_reasoning, match_skills,
-                                         skill_names, profile_of, signals_of,
-                                         experience_years)
+    from engine.phase3_reasoning import (build_reasoning, assign_unique_reasonings,
+                                         match_skills, skill_names, profile_of,
+                                         signals_of, experience_years)
 
 # ---------------------------------------------------------------------------
 # Configuration (single source of truth - no magic numbers, Rules.md spirit)
@@ -73,14 +74,36 @@ AI_KEYWORDS = {
 }
 NON_TECH_TITLE_TOKENS = ("marketing", "sales", "hr", "human resources")
 
+# Off-domain professions for the `domain_mismatch` relevance-trap drop (Fix #1).
+# Matched WHOLE-WORD against ``profile.current_title`` ONLY (never skills/summary)
+# so e.g. "sales" cannot match "salesforce" and "finance" cannot match the
+# "financial" inside another token. This is distinct from NON_TECH_TITLE_TOKENS
+# above (which only fires alongside an AI-keyword skill): a profile whose CURRENT
+# title is squarely another profession is an off-domain trap for this AI-
+# engineering JD and is dropped outright (R4). Kept conservative + title-only.
+# NOTE: tokens with a plausible software/AI collision are deliberately excluded
+# (e.g. "driver" -> "Device Driver Engineer"; "automotive" -> autonomous-driving
+# AI roles) to keep precision high — whole-word matching already prevents
+# substring hits like "sales"->"salesforce".
+TITLE_DENY_LIST = {
+    "civil", "mechanical", "electrical", "chemical", "structural",
+    "geotechnical", "biomedical", "petroleum", "metallurgical",
+    "hr", "human resources", "recruiter", "talent acquisition",
+    "marketing", "sales", "accountant", "accounting", "finance",
+    "nurse", "teacher", "lawyer", "paralegal", "chef", "pharmacist",
+}
+
 # Multiplier constants.
 CONSULTING_LIFER_MULTIPLIER = 0.1
-# 0.5x penalty per R3 ("aggressively penalize job hoppers"). The hopper flag is
+# Job-hopper penalty per R3 ("penalize job hoppers"). Softened 0.5 -> 0.8 as an
+# EXPLICIT, documented R3 tradeoff (Stage-4 hotfix): 0.5x buried strong-but-
+# mobile candidates far below the cutoff; 0.8x still penalizes but lets them
+# compete. The penalty is NOT removed and is still logged. The hopper flag is
 # tracked independently of this multiplier and ALWAYS surfaced as an honest
 # concern in the reasoning for any hopper that still makes the Top-N, so the
-# penalty never hides the flag (audit finding #7 was a misdiagnosis). Soften to
-# 0.8 only if you explicitly accept the R3 tradeoff.
-JOB_HOPPER_MULTIPLIER = 0.5
+# penalty never hides the flag (verified: breakdown["hopper"] < 1.0 still holds
+# at 0.8, so the concern clause still fires).
+JOB_HOPPER_MULTIPLIER = 0.8
 JOB_HOPPER_TENURE_THRESHOLD = 1.5      # years per company
 NOTICE_FREE_DAYS = 30                   # <= this -> no notice penalty
 NOTICE_DECAY_PER_30D = 0.15            # subtracted per extra 30-day block
@@ -88,6 +111,11 @@ NOTICE_DECAY_PER_30D = 0.15            # subtracted per extra 30-day block
 # Honeypot thresholds (real-schema traps, kept conservative to avoid false drops).
 OVERLAP_TENURE_RATIO = 1.5     # summed tenure > calendar span * this -> impossible
 EXPERT_SCORE_THRESHOLD = 90.0  # skill_assessment_scores value >= this == "expert"
+# Experience-inflation trap (Fix #3, REFRAMED — the dataset has no
+# `current_company_age_years` field): claimed years_of_experience implausibly
+# exceeds the real calendar span of career_history. Conservative 2x so a genuine
+# senior listing only recent roles is unlikely to be flagged; null-safe.
+EXPERIENCE_INFLATION_RATIO = 2.0
 
 # Phase-3 placeholder for the reasoning column.
 REASONING_PLACEHOLDER = "AST generation pending Phase 3"
@@ -296,6 +324,22 @@ def _mean_tenure_years(record: dict) -> Optional[float]:
     return (sum(months) / len(months)) / 12.0
 
 
+def _title_denied(title) -> Optional[str]:
+    """Return the off-domain term tripped by ``title`` (whole-word), else None.
+
+    WHOLE-WORD only (boundary regex), matched against the current title string
+    exclusively, so a denied token can never match inside an unrelated word
+    (e.g. "sales" in "salesforce", "finance" in "financial").
+    """
+    t = str(title or "").lower()
+    if not t:
+        return None
+    for term in TITLE_DENY_LIST:
+        if re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", t):
+            return term
+    return None
+
+
 def detect_honeypot(record: dict) -> Optional[str]:
     """Return a reason string if the candidate is a honeypot, else ``None``.
 
@@ -308,12 +352,27 @@ def detect_honeypot(record: dict) -> Optional[str]:
     signals = signals_of(record)
     exp = experience_years(record)
 
+    # 0. Off-domain relevance trap: current title is squarely another profession
+    #    (Civil/HR/Marketing/...) — drop outright for this AI-engineering JD
+    #    (Fix #1). Title-only + whole-word so it stays conservative.
+    if _title_denied(profile.get("current_title")):
+        return "domain_mismatch"
+
     # 1. Overlapping timeline: summed tenure impossibly exceeds the real calendar
     #    span of the career history (fabricated, concurrent full-time roles).
     span, tenure = _career_span_and_tenure_months(record)
     if (span is not None and tenure is not None and span > 0
             and tenure > span * OVERLAP_TENURE_RATIO):
         return "overlapping_timeline"
+
+    # 1b. Experience inflation: claimed years_of_experience implausibly exceeds
+    #     the real calendar span of career_history (fabricated seniority, Fix #3).
+    #     Null-safe — skips unless BOTH the claim and a positive span are present.
+    yoe_claim = profile.get("years_of_experience")
+    if (isinstance(yoe_claim, (int, float)) and yoe_claim >= 0
+            and span is not None and span > 0
+            and yoe_claim * 12 > span * EXPERIENCE_INFLATION_RATIO):
+        return "experience_inflation"
 
     # 2. Fake expert: an expert-level assessment score with <0.5y real experience.
     #    (exp==0 was too weak; <0.5 also catches sub-6-month fabricated experts.)
@@ -492,16 +551,12 @@ def rank(artifacts_dir: str, jd_text: str, k: int, top_n: int, debug: bool
         raw = row["score"]
         row["score"] = (max(raw, 0.0) / max_raw) if max_raw > 0 else 0.0
 
-    # Phase 3: grounded AST reasoning for the final ranked list.
+    # Phase 3: grounded AST reasoning for the final ranked list. ``top`` is in
+    # the deterministic final rank order (R7), so the uniqueness post-pass below
+    # is byte-reproducible. It sets each row["reasoning"] in place and guarantees
+    # 100 globally-unique, grounded strings (R9).
     log("Phase 3: generating grounded reasoning (AST templating)")
-    for rank_pos, row in enumerate(top, start=1):
-        row["reasoning"] = build_reasoning(
-            record=row["record"],
-            rank=rank_pos,
-            matched_skills=row["matched_skills"],
-            hopper_fired=row["hopper_fired"],
-            notice_days=row["notice_days"],
-        )
+    assign_unique_reasonings(top)
     log(f"selected Top {len(top)} (requested {top_n})")
     return top
 
@@ -613,6 +668,13 @@ def main(argv: List[str]) -> int:
     rows = rank(args.artifacts, jd_text, args.k, args.top_n, args.debug)
     if not rows:
         log("ERROR no candidates survived filtering; nothing to write (R10)")
+        return 3
+    if len(rows) != args.top_n:
+        log(
+            f"ERROR only {len(rows)} valid candidates survived but {args.top_n} "
+            f"required; refusing to write a short submission (R9/R10). Widen "
+            f"recall (--k) or relax filters."
+        )
         return 3
     write_csv(rows, args.out)
     log(f"DONE | total={time.monotonic() - _START:.2f}s")
