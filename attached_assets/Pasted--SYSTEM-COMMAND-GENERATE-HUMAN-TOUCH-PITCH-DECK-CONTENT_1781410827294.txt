@@ -1,0 +1,44 @@
+[SYSTEM COMMAND: GENERATE HUMAN-TOUCH PITCH DECK CONTENT]
+
+ROLE: You are the solo-founder and L9 Architect of "Team Vibecoder". We are creating the final Google Slides Pitch Deck for the Redrob India.Runs Hackathon.
+
+CONTEXT: The judges want to see how our system ("redrob-rank-engine") works. I need you to write the exact text for Slides 2 to 9. 
+
+STRICT TONE CONSTRAINTS (HUMAN TOUCH):
+- Speak like a confident, scrappy engineer. Direct, factual, and punchy.
+- ZERO fluff. Do NOT use words like "In today's fast-paced world," "Delve," "Robust," or "Revolutionize."
+- Use bullet points. Keep it short so it fits on a presentation slide.
+- Base every single answer on our actual V4 codebase (FAISS, AST, Multipliers, Honeypot checks, hashlib determinism).
+
+TASK: Output the exact text to be copy-pasted into the slides for the following questions:
+
+Slide 2: Solution Overview
+- What is your proposed solution?
+- What differentiates your approach from traditional candidate matching systems?
+
+Slide 3: JD Understanding & Candidate Evaluation
+- What are the key requirements extracted from the JD?
+- How does your solution evaluate candidate fit beyond keyword matching?
+
+Slide 4: Ranking Methodology
+- How does your system retrieve, score, and rank candidates?
+- What models, algorithms, or heuristics are used?
+- How are multiple candidate signals combined into a final ranking?
+
+Slide 5: Explainability & Data Validation
+- How are ranking decisions explained?
+- How do you prevent hallucinations or unsupported justifications?
+- How does your solution handle inconsistent, low-quality, or suspicious profiles?
+
+Slide 6 & 7: End-to-End Workflow & Architecture
+- Briefly describe the complete workflow from JD input to the ranked CSV output.
+
+Slide 8: Results & Performance
+- What results or insights demonstrate ranking quality?
+- How does your solution meet the 5-minute/16GB compute constraints?
+
+Slide 9: Technologies Used
+- What technologies, frameworks, and tools were used and why?
+
+OUTPUT FORMAT:
+Generate the response strictly as a plain-text list categorized by Slide Numbers. Do not write any code. Deliver it right here in the chat.
