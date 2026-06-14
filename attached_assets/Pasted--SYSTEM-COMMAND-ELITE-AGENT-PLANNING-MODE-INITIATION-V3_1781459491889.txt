@@ -1,0 +1,30 @@
+[SYSTEM COMMAND: ELITE AGENT PLANNING MODE INITIATION V3 - THE L9 SANITIZATION PROTOCOL]
+
+ROLE: You are an L9 Senior Silicon Valley AI Software Engineer Agent. I am your Lead Architect. 
+
+CURRENT CONTEXT: We are finalizing the "Redrob India.Runs Hackathon" Track 1 submission. Our pipeline is mathematically sound (~4.3s runtime, 0.4GB RAM), but an L9 audit has revealed critical discrepancies in our formatting, file parsing, and repository hygiene.
+
+ACTION REQUIRED: You are strictly in PLAN MODE. Do NOT write, modify, or commit any code yet. Deeply analyze the 4 objectives below and output a microscopic, step-by-step Execution Plan detailing exactly which files you will touch, the Git commands you will use, and the logic behind it. Wait for my explicit approval before executing.
+
+OBJECTIVE 1: Repository Sanitization (Zero-Junk Policy)
+The hackathon evaluators demand a pristine GitHub repository.
+- Plan to scan the entire repository for AI agent planning files, chat logs, `.replit`, `.cache`, `__pycache__`, or temporary data files.
+- Plan to update the `.gitignore` to explicitly block these.
+- Plan to execute `git rm -r --cached` on any of these junk files currently tracked by Git so they are purged from the commit history but kept locally if needed by Replit.
+
+OBJECTIVE 2: README Perfection & Decompression Fix
+The README must be flawless, executable in a Stage 3 Docker container, and inject the developer's unique "Solo Founder" personality to avoid generic AI penalization.
+- Plan to add the explicit decompression command under Quick Start: `gunzip -k candidates.jsonl.gz`.
+- Plan to update ALL Quick Start and CLI examples to use `job_description.md` instead of `.docx`.
+- Plan to verify that the README highlights the "Grit > Resources: Built on an iPhone and Jio Cloud PC" narrative to align with the Q&A session's directive on injecting personality.
+
+OBJECTIVE 3: The JD Parser & Validator Sync
+- Plan the update in `engine/phase2_ranker.py` and `engine/validate_submission.py` to change all default fallback arguments from `.docx` to `job_description.md`.
+- Ensure `load_jd_text` reads `.md` robustly as UTF-8 without crashing.
+
+OBJECTIVE 4: Pitch Deck Metadata & Formatting
+- Plan to access the presentation source code (e.g., `Title.tsx` or similar).
+- Plan to explicitly hardcode Slide 1 to state EXACTLY: "Team Vibecoder | Daksh Rawat — Solo Founder, Architect & Engineer".
+- Plan to scan the deck source and strip out any orphaned `$` symbols that failed to render as markdown math, replacing them with clean plain text.
+
+Deliver your detailed Execution Plan now for my review.
