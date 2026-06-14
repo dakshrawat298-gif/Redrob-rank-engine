@@ -22,9 +22,16 @@ export default function Title() {
               <span className="px-[1.5vw] py-[0.9vh] rounded-full text-[1.5vw] font-semibold border border-accent/70 text-accent">
                 Track 1
               </span>
-              <span className="text-[1.7vw] text-slate-300">
-                Daksh Rawat — Solo Founder, Architect &amp; Engineer
-              </span>
+            </div>
+            <div className="mt-[3vh] flex flex-col gap-[1.2vh]">
+              <div className="flex items-baseline gap-[0.8vw]">
+                <span className="font-mono text-[1.5vw] text-muted">Team Name:</span>
+                <span className="text-[1.9vw] font-semibold text-text">team_vibecoder</span>
+              </div>
+              <div className="flex items-baseline gap-[0.8vw]">
+                <span className="font-mono text-[1.5vw] text-muted">Team Leader Name:</span>
+                <span className="text-[1.9vw] text-slate-200">Daksh Rawat — Solo Founder, Architect &amp; Engineer</span>
+              </div>
             </div>
           </div>
 

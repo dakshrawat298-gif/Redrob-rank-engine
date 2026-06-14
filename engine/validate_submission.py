@@ -14,7 +14,7 @@ not be rejected by the evaluation harness:
 
 Run:
     python3 engine/validate_submission.py team_vibecoder.csv \
-        --artifacts engine/data --jd-file job_description.docx
+        --artifacts engine/data --jd-file job_description.md
 """
 from __future__ import annotations
 
@@ -157,7 +157,7 @@ def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(description="Stage-1 submission integrity checker")
     ap.add_argument("csv", help="submission CSV (e.g. team_vibecoder.csv)")
     ap.add_argument("--artifacts", default="engine/data")
-    ap.add_argument("--jd-file", default=None)
+    ap.add_argument("--jd-file", default="job_description.md")
     args = ap.parse_args(argv)
 
     errors, warns = validate(args.csv, args.artifacts, args.jd_file)

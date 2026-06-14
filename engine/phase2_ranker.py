@@ -68,6 +68,7 @@ _LOGGER = get_logger("phase2")
 
 RECALL_K = 1000          # Pass-1 recall set size
 TOP_N = 100              # final output size
+DEFAULT_JD_FILE = "job_description.md"  # JD shipped by the organizers
 
 # Consulting firms for the "consulting lifer" penalty (case-insensitive match).
 CONSULTING_FIRMS = {
@@ -641,9 +642,18 @@ def extract_docx_text(path: str) -> str:
 
 
 def load_jd_text(path: str) -> str:
-    """Load JD text from a ``.docx`` (Word) or a plain-text file."""
-    if path.lower().endswith(".docx"):
+    """Load JD text from a ``.md``/plain-text file or a ``.docx`` (Word).
+
+    The hackathon organizers ship the JD as ``job_description.md``; Markdown is
+    read natively as UTF-8 text. ``.docx`` is still supported via the stdlib
+    reader as a fallback. Any other extension is treated as plain UTF-8 text.
+    """
+    lower = path.lower()
+    if lower.endswith(".docx"):
         text = extract_docx_text(path)
+    elif lower.endswith(".md"):
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
     else:
         with open(path, "r", encoding="utf-8") as f:
             text = f.read()
@@ -662,7 +672,8 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--artifacts", default="engine/data",
                    help="Directory with Phase 1 artifacts (default: engine/data)")
     p.add_argument("--jd", default=None, help="Job description text")
-    p.add_argument("--jd-file", default=None, help="Path to a file with the JD text")
+    p.add_argument("--jd-file", default=DEFAULT_JD_FILE,
+                   help=f"Path to a file with the JD text (default: {DEFAULT_JD_FILE})")
     p.add_argument("--out", default="engine/data/phase2_ranked.csv",
                    help="Output CSV path")
     p.add_argument("--k", type=int, default=RECALL_K, help="Pass-1 recall size")
@@ -680,20 +691,24 @@ def main(argv: List[str]) -> int:
     """
     args = parse_args(argv)
 
-    if args.jd_file:
-        if not os.path.exists(args.jd_file):
-            log(f"ERROR JD file not found: {args.jd_file}")
-            return 2
+    # JD resolution precedence: explicit --jd text wins, then --jd-file. The
+    # --jd-file default (job_description.md) is only a convenience: if it is the
+    # default and the file is absent we fall back to the built-in SAMPLE_JD, but
+    # an explicitly-supplied --jd-file that is missing fails loudly (R10).
+    if args.jd:
+        jd_text = args.jd.strip()
+    elif args.jd_file and os.path.exists(args.jd_file):
         try:
             jd_text = load_jd_text(args.jd_file)
         except Exception as exc:  # noqa: BLE001 - surface any parse failure loudly
             log(f"ERROR could not read JD file {args.jd_file}: {exc}")
             return 2
         log(f"loaded JD from {args.jd_file} ({len(jd_text)} chars)")
-    elif args.jd:
-        jd_text = args.jd.strip()
+    elif args.jd_file and args.jd_file != DEFAULT_JD_FILE:
+        log(f"ERROR JD file not found: {args.jd_file}")
+        return 2
     else:
-        log("no --jd/--jd-file given; using built-in SAMPLE_JD")
+        log(f"no JD given ({DEFAULT_JD_FILE} absent); using built-in SAMPLE_JD")
         jd_text = SAMPLE_JD
 
     if not jd_text:

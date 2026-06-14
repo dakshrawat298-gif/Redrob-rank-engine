@@ -32,7 +32,7 @@ flowchart TD
     end
 
     subgraph P2["PHASE 2 · Filter & Score (runtime)"]
-        B1[JD .docx] --> B2[Embed JD]
+        B1[JD .md] --> B2[Embed JD]
         B2 --> B3{{FAISS IP search<br/>recall top-K = 1000}}
         A5 -. index .-> B3
         B3 --> B4[Lazy-load 1000 records<br/>via byte offsets]
@@ -65,21 +65,24 @@ Requires Python 3.10+ on CPU. No GPU, no external services.
 # 1. Install dependencies (CPU-only: numpy, faiss-cpu, fastembed)
 pip install -r engine/requirements.txt
 
-# 2. PHASE 1 — pre-compute embeddings + FAISS index (offline, one-time)
+# 2. Decompress the provided dataset (keeps the .gz with -k)
+gunzip -k candidates.jsonl.gz
+
+# 3. PHASE 1 — pre-compute embeddings + FAISS index (offline, one-time)
 #    Produces engine/data/ (FAISS index, id_map, byte-offset index, manifest).
 python3 engine/phase1_precompute.py --input candidates.jsonl --outdir engine/data
 
-# 3. PHASE 2 & 3 — rank + ground reasoning, write the submission
+# 4. PHASE 2 & 3 — rank + ground reasoning, write the submission
 python3 engine/phase2_ranker.py \
   --artifacts engine/data \
-  --jd-file job_description.docx \
+  --jd-file job_description.md \
   --out team_vibecoder.csv
 
-# 4. Validate the submission (header, 100 rows, unique ids,
+# 5. Validate the submission (header, 100 rows, unique ids,
 #    monotonic score in [0,1], 100% grounded reasoning)
 python3 engine/validate_submission.py team_vibecoder.csv \
   --artifacts engine/data \
-  --jd-file job_description.docx
+  --jd-file job_description.md
 ```
 
 **One-shot, air-gapped run** (precompute → rank with the network physically
@@ -88,7 +91,7 @@ blocked during ranking, proving the no-API rule):
 ```bash
 python3 engine/run_ranker.py \
   --input candidates.jsonl \
-  --jd-file job_description.docx \
+  --jd-file job_description.md \
   --out team_vibecoder.csv \
   --network-off
 ```
