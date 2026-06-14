@@ -1,0 +1,33 @@
+[SYSTEM COMMAND: ELITE AGENT PLANNING MODE INITIATION V2]
+
+ROLE: You are an L9 Senior Silicon Valley AI Software Engineer Agent. I am your Lead Architect. 
+
+CURRENT CONTEXT: We are finalizing the "Redrob India.Runs Hackathon" Track 1 submission. Our pipeline is a CPU-only, offline FAISS + AST reasoning engine. The codebase is 99% complete, but we have strict grading constraints we must meet to pass the Stage 3 Docker reproduction and Stage 4 manual review.
+
+ACTION REQUIRED: You are strictly in PLAN MODE. Do NOT write, modify, or commit any code or files yet. Deeply analyze the 5 objectives below and output a microscopic, step-by-step Execution Plan detailing exactly which files you will touch, which lines/functions will change, and the logic behind it. Wait for my explicit approval before executing any code.
+
+OBJECTIVE 1: The JD Parser Fix (engine/phase2_ranker.py)
+The hackathon organizers are providing the job description as `job_description.md`, but our CLI defaults and `load_jd_text` logic currently expect `.docx`. 
+- Plan the update for `parse_args` to change default fallback texts from `.docx` to `.md`.
+- Plan the update for `load_jd_text(path: str)` to natively read `.md` files as standard UTF-8 text safely, without crashing.
+
+OBJECTIVE 2: Validator Sync (engine/validate_submission.py)
+Our Stage-1 integrity checker must mirror the Phase 2 ranker.
+- Plan the update for the `ap.add_argument("--jd-file", ...)` default parameter to target `job_description.md` instead of `.docx`.
+
+OBJECTIVE 3: The Decompression Instruction (README.md)
+Stage 3 judges will copy-paste our instructions inside a strict Docker container.
+- Plan to add the exact decompression command explicitly under the Quick Start section: `gunzip -k candidates.jsonl.gz`.
+
+OBJECTIVE 4: CLI Command Cleanup (README.md)
+- Plan to update all CLI execution examples in the README to explicitly use the `.md` file (e.g., `--jd-file job_description.md`).
+- Ensure the documentation strictly references outputting `team_vibecoder.csv` and remove any accidental references to old artifacts like `team_vibecoder 3.csv`.
+
+OBJECTIVE 5: Pitch Deck Artifact Fix (Redrob-Rank-Engine---Pitch-Deck)
+You previously generated our presentation using your Slides skill. 
+- Plan to access the presentation source and remove the markdown math formatting glitches (delete all stray `$` signs that failed to render properly).
+- Plan to explicitly hardcode Slide 1 to state exactly:
+  Team Name: team_vibecoder
+  Team Leader Name: Daksh Rawat — Solo Founder, Architect & Engineer
+
+Deliver your detailed Execution Plan now for my review.

@@ -24,3 +24,9 @@ id = "e4_oIS7PdpVy4-D18XSFf"
 uri = "file://NotebookLM_Master_Codebase_V3.txt"
 type = "text"
 title = "NotebookLM Master Codebase V3 (Final Audit Bundle)"
+
+[[outputs]]
+id = "pZv7rLcN1YI78otdS8BBY"
+uri = "file://.local/outputs/Redrob-Rank-Engine---Pitch-Deck.pdf"
+type = "pdf"
+title = "Redrob Rank Engine — Pitch Deck.pdf"
