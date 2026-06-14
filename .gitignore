@@ -62,3 +62,13 @@ engine/data/
 candidates.jsonl
 candidates.jsonl.gz
 *.faiss
+
+# Agent / Replit workspace junk — not part of the submission
+.agents/
+attached_assets/
+.replit
+.replitignore
+.upm/
+
+# Stale source artifacts (JD is now job_description.md)
+job_description.docx

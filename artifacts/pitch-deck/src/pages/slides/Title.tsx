@@ -23,15 +23,10 @@ export default function Title() {
                 Track 1
               </span>
             </div>
-            <div className="mt-[3vh] flex flex-col gap-[1.2vh]">
-              <div className="flex items-baseline gap-[0.8vw]">
-                <span className="font-mono text-[1.5vw] text-muted">Team Name:</span>
-                <span className="text-[1.9vw] font-semibold text-text">team_vibecoder</span>
-              </div>
-              <div className="flex items-baseline gap-[0.8vw]">
-                <span className="font-mono text-[1.5vw] text-muted">Team Leader Name:</span>
-                <span className="text-[1.9vw] text-slate-200">Daksh Rawat — Solo Founder, Architect &amp; Engineer</span>
-              </div>
+            <div className="mt-[3vh] flex items-baseline gap-[1vw] text-[1.9vw]">
+              <span className="font-semibold text-text">Team Vibecoder</span>
+              <span className="text-muted">|</span>
+              <span className="text-slate-200">Daksh Rawat — Solo Founder, Architect &amp; Engineer</span>
             </div>
           </div>
 

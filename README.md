@@ -9,6 +9,13 @@ This is a retrieval-and-rerank system built on **math and logic**, not an LLM
 wrapper. Reasoning can't lie because it's generated from the candidate's own
 fields by a typed AST and rejected if any token isn't grounded.
 
+> **Grit > Resources.** Built, coded, and shipped single-handedly by
+> **Daksh Rawat** — Solo Founder, Architect & Engineer — from an **iPhone** and a
+> **Jio Cloud PC**. No team, no GPU cluster, no budget: just a clear spec, a
+> stubborn refusal to fake anything, and a pipeline that earns every one of its
+> 100 picks. If it can rank 100k candidates in ~4.3s on a single CPU from a
+> phone, it can run anywhere.
+
 | Constraint | Budget | Ours |
 |---|---|---|
 | Compute | CPU-only | CPU-only (ONNX, no PyTorch/GPU) |
