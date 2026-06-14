@@ -23,6 +23,7 @@ import csv
 import json
 import os
 import sys
+from typing import List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -33,7 +34,8 @@ EXPECTED_HEADER = ["candidate_id", "rank", "score", "reasoning"]
 EXPECTED_ROWS = 100
 
 
-def _load_record(plain_path: str, offsets: dict, cid: str):
+def _load_record(plain_path: str, offsets: dict, cid: str) -> Optional[dict]:
+    """Seek to ``cid``'s byte offset and parse its record; None if not indexed."""
     off = offsets.get(cid)
     if off is None:
         return None
@@ -42,7 +44,19 @@ def _load_record(plain_path: str, offsets: dict, cid: str):
         return json.loads(f.readline())
 
 
-def validate(csv_path: str, artifacts: str, jd_path: str | None):
+def validate(
+    csv_path: str, artifacts: str, jd_path: Optional[str]
+) -> Tuple[List[str], List[str]]:
+    """Check the submission CSV against the R9/R2/R10 acceptance rules.
+
+    Verifies header, row count, per-row structure (unique ids, contiguous ranks,
+    monotonic scores in [0, 1], non-empty reasoning), and — when artifacts are
+    present — candidate existence plus R2 grounding of every reasoning string.
+
+    Returns:
+        ``(errors, warns)``: ``errors`` is empty iff the submission is valid;
+        ``warns`` carries informational notes (e.g. grounding confirmation).
+    """
     errors: list[str] = []
     warns: list[str] = []
 
@@ -133,7 +147,13 @@ def validate(csv_path: str, artifacts: str, jd_path: str | None):
     return errors, warns
 
 
-def main(argv):
+def main(argv: List[str]) -> int:
+    """CLI entrypoint: validate the CSV and print the PASS/FAIL contract to stdout.
+
+    Returns 0 when the submission passes, 1 otherwise. The ``RESULT: PASS/FAIL``
+    line is emitted on stdout deliberately — it is the machine-readable contract
+    other tooling greps for, so it must NOT go through the stderr logger.
+    """
     ap = argparse.ArgumentParser(description="Stage-1 submission integrity checker")
     ap.add_argument("csv", help="submission CSV (e.g. team_vibecoder.csv)")
     ap.add_argument("--artifacts", default="engine/data")

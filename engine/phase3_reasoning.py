@@ -51,19 +51,22 @@ SKILL_DENY_LIST = {
 # Field formatters (single source of truth - render AND validator agree)
 # ---------------------------------------------------------------------------
 
-def _fmt_years(v) -> str:
+def _fmt_years(v: object) -> str:
+    """Render a years-of-experience value as a bare integer string."""
     return f"{int(v)}"
 
 
-def _fmt_notice(v) -> str:
+def _fmt_notice(v: object) -> str:
+    """Render a notice-period value (days) as a bare integer string."""
     return f"{int(v)}"
 
 
-def _fmt_github(v) -> str:
+def _fmt_github(v: object) -> str:
+    """Render a GitHub activity score with two decimal places."""
     return f"{float(v):.2f}"
 
 
-def _get_path(record: dict, *keys):
+def _get_path(record: dict, *keys: str) -> object:
     """Nested getter; returns None if any level is missing/non-dict."""
     cur = record
     for k in keys:
@@ -79,11 +82,13 @@ def _get_path(record: dict, *keys):
 # ---------------------------------------------------------------------------
 
 def profile_of(record: dict) -> dict:
+    """The candidate's ``profile`` sub-dict (empty dict if absent/malformed)."""
     p = record.get("profile")
     return p if isinstance(p, dict) else {}
 
 
 def signals_of(record: dict) -> dict:
+    """The candidate's ``redrob_signals`` sub-dict (empty dict if absent/malformed)."""
     s = record.get("redrob_signals")
     return s if isinstance(s, dict) else {}
 
@@ -98,7 +103,8 @@ def skill_names(record: dict) -> List[str]:
     return names
 
 
-def current_title(record: dict):
+def current_title(record: dict) -> Optional[str]:
+    """The candidate's current job title (``profile.current_title``) or None."""
     return profile_of(record).get("current_title")
 
 
@@ -119,6 +125,7 @@ def github_score(record: dict) -> Optional[float]:
 
 
 def _total_tenure_months(record: dict) -> Optional[int]:
+    """Sum of ``career_history[].duration_months`` (None if no tenure data)."""
     hist = record.get("career_history")
     if not isinstance(hist, list):
         return None
@@ -152,28 +159,36 @@ def experience_years(record: dict) -> Optional[float]:
 # ---------------------------------------------------------------------------
 
 class Node:
+    """Base class for reasoning-template nodes; subclasses implement ``render``."""
+
     def render(self, ctx: dict) -> Optional[str]:  # pragma: no cover - interface
+        """Render this node to a string given ``ctx``, or None when pruned."""
         raise NotImplementedError
 
 
 class Lit(Node):
     """Controlled literal scaffolding (no candidate data)."""
 
-    def __init__(self, text: str):
+    def __init__(self, text: str) -> None:
+        """Store the fixed literal text to emit."""
         self.text = text
 
     def render(self, ctx: dict) -> Optional[str]:
+        """Return the literal text unchanged (never pruned)."""
         return self.text
 
 
 class Field(Node):
     """Leaf bound to a candidate field. Prunes when the value is absent/empty."""
 
-    def __init__(self, getter: Callable[[dict], object], fmt: Callable[[object], str]):
+    def __init__(self, getter: Callable[[dict], object],
+                 fmt: Callable[[object], str]) -> None:
+        """Bind a ``getter`` (ctx -> value) and a ``fmt`` (value -> string)."""
         self.getter = getter
         self.fmt = fmt
 
     def render(self, ctx: dict) -> Optional[str]:
+        """Render the bound field, pruning to None when absent/empty/malformed."""
         value = self.getter(ctx)
         if value is None:
             return None
@@ -188,11 +203,14 @@ class Field(Node):
 class Skills(Node):
     """Named matched skills - strictly a subset of the candidate's own list."""
 
-    def __init__(self, prefix: str = " incl. ", n: int = SKILLS_IN_REASONING):
+    def __init__(self, prefix: str = " incl. ",
+                 n: int = SKILLS_IN_REASONING) -> None:
+        """Configure the lead-in ``prefix`` and max number of skills ``n``."""
         self.prefix = prefix
         self.n = n
 
     def render(self, ctx: dict) -> Optional[str]:
+        """Render up to ``n`` matched skills, pruning to None when none matched."""
         matched = ctx.get("matched_skills") or []
         chosen = matched[: self.n]
         if not chosen:
@@ -203,11 +221,13 @@ class Skills(Node):
 class Seq(Node):
     """Concatenate children, dropping pruned (None) ones."""
 
-    def __init__(self, children: List[Node], sep: str = ""):
+    def __init__(self, children: List[Node], sep: str = "") -> None:
+        """Store child nodes and the separator joining their rendered parts."""
         self.children = children
         self.sep = sep
 
     def render(self, ctx: dict) -> Optional[str]:
+        """Render children and join non-pruned parts; None if all pruned."""
         parts = [c.render(ctx) for c in self.children]
         parts = [p for p in parts if p]
         if not parts:
@@ -218,10 +238,12 @@ class Seq(Node):
 class Choice(Node):
     """Deterministically pick one phrasing per candidate; fall back if pruned."""
 
-    def __init__(self, children: List[Node]):
+    def __init__(self, children: List[Node]) -> None:
+        """Store the candidate phrasings to choose between."""
         self.children = children
 
     def render(self, ctx: dict) -> Optional[str]:
+        """Deterministically pick one rendered child, falling back if pruned."""
         n = len(self.children)
         if n == 0:
             return None
@@ -238,16 +260,19 @@ class Choice(Node):
 # ---------------------------------------------------------------------------
 
 def _years(prefix: str = "", suffix: str = "") -> Field:
+    """A grounded ``Field`` leaf rendering years-of-experience with affixes."""
     return Field(lambda ctx: experience_years(ctx["record"]),
                  lambda v: f"{prefix}{_fmt_years(v)}{suffix}")
 
 
 def _title(prefix: str = "", suffix: str = "") -> Field:
+    """A grounded ``Field`` leaf rendering the candidate's current title."""
     return Field(lambda ctx: current_title(ctx["record"]),
                  lambda v: f"{prefix}{str(v).strip()}{suffix}")
 
 
 def _github(prefix: str = ", GitHub activity ") -> Field:
+    """A grounded ``Field`` leaf rendering the GitHub activity score."""
     return Field(lambda ctx: github_score(ctx["record"]),
                  lambda v: f"{prefix}{_fmt_github(v)}")
 
@@ -257,6 +282,7 @@ def _github(prefix: str = ", GitHub activity ") -> Field:
 # ---------------------------------------------------------------------------
 
 def _tier_variants() -> Dict[str, Choice]:
+    """Build the per-tier ``Choice`` of reasoning phrasings (richest first)."""
     top = Choice([
         Seq([Lit("Exceptional fit: "), _years(suffix="y"), _title(prefix=" as a "),
              Lit(" with strong engagement signals"), Skills(prefix=", incl. ")]),
@@ -347,6 +373,7 @@ _FACTS = _tier_facts()
 # ---------------------------------------------------------------------------
 
 def tier_of(rank: int) -> str:
+    """Map a 1-based rank to its reasoning tier (``top``/``mid``/``low``)."""
     if rank <= 20:
         return "top"
     if rank <= 80:
@@ -446,7 +473,7 @@ def _tidy(text: str) -> str:
     return text.strip()
 
 
-def _concerns(notice_days, hopper_fired: bool) -> str:
+def _concerns(notice_days: object, hopper_fired: bool) -> str:
     """Honest red-flag clauses appended to the justification."""
     out = ""
     if isinstance(notice_days, (int, float)) and notice_days > NOTICE_CONCERN_THRESHOLD:
@@ -478,7 +505,7 @@ def _is_specific(text: str, record: dict, matched_skills: List[str]) -> bool:
 
 
 def build_reasoning(record: dict, rank: int, matched_skills: List[str],
-                    hopper_fired: bool, notice_days) -> str:
+                    hopper_fired: bool, notice_days: object) -> str:
     """Assemble the grounded, tier-appropriate, <=240-char reasoning string."""
     tier = tier_of(rank)
     cid = str(record.get("candidate_id", rank))

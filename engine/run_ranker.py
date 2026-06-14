@@ -38,7 +38,7 @@ import socket
 import sys
 import time
 from contextlib import contextmanager
-from typing import List, Optional
+from typing import Iterator, List, Optional, Tuple
 
 # Make the sibling phase modules importable whether run as a script
 # (`python3 engine/run_ranker.py`) or as a module.
@@ -48,6 +48,9 @@ if _HERE not in sys.path:
 
 import phase1_precompute as p1  # noqa: E402
 import phase2_ranker as p2      # noqa: E402
+from logging_util import get_logger  # noqa: E402
+
+_LOGGER = get_logger("run_ranker")
 
 
 # ---------------------------------------------------------------------------
@@ -55,16 +58,28 @@ import phase2_ranker as p2      # noqa: E402
 # ---------------------------------------------------------------------------
 
 def log(msg: str) -> None:
-    print(f"[run_ranker] {msg}", flush=True)
+    """Emit an orchestration progress line via the shared logger (stderr).
+
+    ``ERROR``/``WARN``-prefixed messages map to the matching level. The
+    human-facing resource report (``_rule`` banners + the RESOURCE PROFILE table)
+    intentionally stays on stdout — it is the deliverable benchmark output.
+    """
+    if msg.startswith("ERROR"):
+        _LOGGER.error(msg)
+    elif msg.startswith("WARN"):
+        _LOGGER.warning(msg)
+    else:
+        _LOGGER.info(msg)
 
 
 def _rule(title: str) -> None:
+    """Print a titled separator banner to stdout (part of the human report)."""
     print("\n" + "=" * 72, flush=True)
     print(f"  {title}", flush=True)
     print("=" * 72, flush=True)
 
 
-def _rusage_peak_mb() -> tuple:
+def _rusage_peak_mb() -> Tuple[float, float]:
     """Peak RSS (MB) for this process and for its reaped children, separately.
 
     ``ru_maxrss`` is kilobytes on Linux (bytes on macOS); we assume Linux. Stage 1
@@ -102,7 +117,7 @@ _LOOPBACK = {"127.0.0.1", "::1", "localhost", "0.0.0.0"}
 
 
 @contextmanager
-def network_air_gap(enabled: bool):
+def network_air_gap(enabled: bool) -> Iterator[None]:
     """Block ALL non-loopback outbound socket connections while active.
 
     Implemented by monkeypatching ``socket.socket.connect`` and
@@ -121,18 +136,21 @@ def network_air_gap(enabled: bool):
     prev_env = {k: os.environ.get(k) for k in
                 ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE")}
 
-    def _host_of(address) -> Optional[str]:
+    def _host_of(address: object) -> Optional[str]:
+        """Extract the host string from a socket address tuple, else None."""
         if isinstance(address, tuple) and address:
             return str(address[0])
         return None
 
-    def guarded_connect(self, address):
+    def guarded_connect(self: socket.socket, address: object) -> object:
+        """``socket.connect`` replacement: allow loopback, block everything else."""
         host = _host_of(address)
         if host is None or host in _LOOPBACK:
             return real_connect(self, address)
         raise NetworkBlocked(f"outbound network blocked (air-gap): {address}")
 
-    def guarded_create(address, *args, **kwargs):
+    def guarded_create(address: object, *args: object, **kwargs: object) -> object:
+        """``create_connection`` replacement: block any non-loopback target."""
         host = _host_of(address)
         if host is not None and host not in _LOOPBACK:
             raise NetworkBlocked(f"outbound network blocked (air-gap): {address}")
@@ -178,6 +196,7 @@ def prove_isolation() -> bool:
 # ---------------------------------------------------------------------------
 
 def preview_csv(path: str, n: int = 5) -> None:
+    """Print the top and bottom ``n`` rows of a ranked CSV to stdout (a report)."""
     with open(path, "r", encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
     if not rows:
@@ -186,6 +205,7 @@ def preview_csv(path: str, n: int = 5) -> None:
     score_col = "final_score" if "final_score" in rows[0] else "score"
 
     def show(label: str, subset: List[dict]) -> None:
+        """Print one labelled block of preview rows under a rule banner."""
         _rule(label)
         for r in subset:
             rank = r.get("rank", "?")
@@ -205,6 +225,11 @@ def preview_csv(path: str, n: int = 5) -> None:
 # ---------------------------------------------------------------------------
 
 def run(args: argparse.Namespace) -> int:
+    """Run the full pipeline (optional mock → precompute → rank) with profiling.
+
+    Returns a process exit code: 0 on success, or non-zero on a fail-loud error
+    (missing input, failed isolation probe, or a non-zero ranking stage, per R10).
+    """
     t_start = time.monotonic()
     os.makedirs(args.artifacts, exist_ok=True)
 
@@ -299,6 +324,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
+    """Parse the full-pipeline runner's CLI arguments (input, JD, tuning, sandbox)."""
     p = argparse.ArgumentParser(
         description="Redrob Rank Engine - full pipeline runner with profiling.",
     )
@@ -342,6 +368,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 
 def main(argv: List[str]) -> int:
+    """CLI entrypoint: parse args and run the full pipeline; returns an exit code."""
     return run(parse_args(argv))
 
 

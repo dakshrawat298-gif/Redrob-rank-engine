@@ -12,9 +12,29 @@ st.set_page_config(
     layout="wide",
 )
 
+st.markdown(
+    """
+    <style>
+      .block-container { padding-top: 2.2rem; max-width: 1400px; }
+      [data-testid="stMetricValue"] { font-size: 1.45rem; }
+      [data-testid="stMetricLabel"] { opacity: 0.75; }
+      [data-testid="stSidebar"] [data-testid="stMetric"] {
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 10px;
+          padding: 0.6rem 0.85rem;
+      }
+      h1 { letter-spacing: -0.02em; }
+      .stDataFrame { border-radius: 10px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 @st.cache_data(show_spinner=False)
 def load_rankings(path: str) -> pd.DataFrame:
+    """Load and type-coerce the ranked submission CSV, sorted by ascending rank."""
     df = pd.read_csv(path, dtype={"candidate_id": str})
     df["rank"] = df["rank"].astype(int)
     df["score"] = df["score"].astype(float)
@@ -52,6 +72,8 @@ c1.metric("Candidates Ranked", f"{len(df):,}")
 c2.metric("Top Score", f"{df['score'].max():.3f}")
 c3.metric("Cutoff Score (#100)", f"{df['score'].min():.3f}")
 
+st.divider()
+
 query = st.text_input(
     "Filter by candidate ID or reasoning keyword",
     placeholder="e.g. CAND_0068351, RAG, LangChain, Qdrant…",
@@ -63,7 +85,10 @@ if query:
         query, case=False, na=False, regex=False
     ) | df["reasoning"].str.contains(query, case=False, na=False, regex=False)
     view = df[mask]
-    st.caption(f"Showing {len(view)} of {len(df)} candidates matching “{query}”.")
+    if view.empty:
+        st.info(f"No candidates match “{query}”. Try a different ID or keyword.")
+    else:
+        st.caption(f"Showing {len(view)} of {len(df)} candidates matching “{query}”.")
 
 st.dataframe(
     view,
@@ -90,6 +115,8 @@ st.dataframe(
 )
 
 with st.expander("Read full reasoning per candidate"):
+    if view.empty:
+        st.caption("No candidates to show for the current filter.")
     for _, row in view.iterrows():
         st.markdown(
             f"**#{row['rank']} · {row['candidate_id']}** "
@@ -97,3 +124,7 @@ with st.expander("Read full reasoning per candidate"):
         )
         st.write(row["reasoning"])
         st.divider()
+
+st.caption(
+    "Team Vibecoder · Redrob Rank Engine — deterministic, byte-reproducible runs."
+)

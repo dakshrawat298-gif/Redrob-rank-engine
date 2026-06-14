@@ -54,7 +54,14 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Tuple
+
+try:  # works whether run as a script (engine/) or imported as engine.phase1_precompute
+    from logging_util import get_logger
+except ImportError:  # pragma: no cover
+    from engine.logging_util import get_logger
+
+_LOGGER = get_logger("phase1")
 
 # ---------------------------------------------------------------------------
 # Configuration constants (single source of truth for this stage)
@@ -95,9 +102,18 @@ _START = time.monotonic()
 
 
 def log(msg: str) -> None:
-    """Timestamped log line to stderr (keeps stdout clean), per Design.md s3."""
-    elapsed = time.monotonic() - _START
-    print(f"[{elapsed:7.2f}s] {msg}", file=sys.stderr, flush=True)
+    """Emit a diagnostic line via the shared ``redrob`` logger (stderr).
+
+    ``ERROR``/``WARN``-prefixed messages are routed to the matching log level so
+    the standard logging machinery (levels, formatting, filtering) applies while
+    existing call sites stay unchanged. Stdout is left clean for artifacts.
+    """
+    if msg.startswith("ERROR"):
+        _LOGGER.error(msg)
+    elif msg.startswith("WARN"):
+        _LOGGER.warning(msg)
+    else:
+        _LOGGER.info(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -267,13 +283,13 @@ def ensure_plain_jsonl(input_path: str, outdir: str) -> str:
 # Core: stream records, build offsets + embedding text
 # ---------------------------------------------------------------------------
 
-def _join_nonempty(values, sep: str = ", ") -> str:
+def _join_nonempty(values: Iterable[object], sep: str = ", ") -> str:
     """Join only the non-empty stringified values (drops None/blank)."""
     out = [str(v).strip() for v in values if v is not None and str(v).strip()]
     return sep.join(out)
 
 
-def _as_clean_str(value) -> str:
+def _as_clean_str(value: object) -> str:
     """Stringify a *scalar* field safely.
 
     Returns "" for ``None`` or container types (dict/list/tuple/set) so a
@@ -544,6 +560,7 @@ def precompute_shard(plain_path: str, start: int, end: int, out_prefix: str,
     batch_texts: List[str] = []
 
     def flush() -> None:
+        """Embed the buffered batch, L2-normalize it, and append to ``vectors``."""
         nonlocal batch_texts
         if not batch_texts:
             return
@@ -636,6 +653,8 @@ def precompute_parallel(plain_path: str, outdir: str, model_name: str,
     prefixes = [os.path.join(shard_dir, f"shard_{i}") for i in range(nshards)]
 
     def _done(i: int) -> bool:
+        """True iff shard ``i`` is already on disk AND its ``.ok`` marker matches
+        this run's byte range + model (stale/partial shards are redone)."""
         prefix = prefixes[i]
         if not (os.path.exists(prefix + ".npy") and os.path.exists(prefix + ".json")
                 and os.path.exists(prefix + ".ok")):
@@ -652,6 +671,7 @@ def precompute_parallel(plain_path: str, outdir: str, model_name: str,
                 and ok.get("model") == model_name)
 
     def _spawn(i: int) -> subprocess.Popen:
+        """Launch a worker-mode subprocess to embed shard ``i``'s byte range."""
         start, end = boundaries[i]
         argv = [sys.executable, os.path.abspath(__file__),
                 "--input", os.path.abspath(plain_path),
@@ -773,6 +793,7 @@ def precompute_parallel(plain_path: str, outdir: str, model_name: str,
 # ---------------------------------------------------------------------------
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
+    """Parse Phase-1 CLI arguments (input/mock source, model, sharding flags)."""
     p = argparse.ArgumentParser(
         description="Phase 1 - pre-compute embeddings + byte-offset index.",
     )
@@ -800,6 +821,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 
 def main(argv: List[str]) -> int:
+    """Phase-1 CLI entrypoint: build artifacts, or embed one shard in worker mode.
+
+    Returns a process exit code (0 on success; non-zero on a fail-loud error
+    such as a missing input file, per R10).
+    """
     args = parse_args(argv)
 
     # --- Worker mode: embed one byte-range shard and exit (no artifacts) ---

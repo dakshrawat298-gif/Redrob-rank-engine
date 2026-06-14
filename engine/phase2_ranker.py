@@ -43,16 +43,24 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 import zipfile
-from typing import Dict, List, Optional, Tuple
+from typing import IO, TYPE_CHECKING, Dict, List, Optional, Tuple
 
 try:  # works whether run as a script (engine/) or imported as engine.phase2_ranker
     from phase3_reasoning import (build_reasoning, assign_unique_reasonings,
                                   match_skills, skill_names, profile_of,
                                   signals_of, experience_years)
+    from logging_util import get_logger
 except ImportError:  # pragma: no cover
     from engine.phase3_reasoning import (build_reasoning, assign_unique_reasonings,
                                          match_skills, skill_names, profile_of,
                                          signals_of, experience_years)
+    from engine.logging_util import get_logger
+
+if TYPE_CHECKING:  # heavy deps are imported lazily inside functions
+    import faiss
+    import numpy as np
+
+_LOGGER = get_logger("phase2")
 
 # ---------------------------------------------------------------------------
 # Configuration (single source of truth - no magic numbers, Rules.md spirit)
@@ -135,15 +143,26 @@ _START = time.monotonic()
 
 
 def log(msg: str) -> None:
-    """Timestamped log line to stderr (keeps stdout clean), per Design.md s3."""
-    print(f"[{time.monotonic() - _START:7.2f}s] {msg}", file=sys.stderr, flush=True)
+    """Emit a diagnostic line via the shared ``redrob`` logger (stderr).
+
+    ``ERROR``/``WARN``-prefixed messages map to the matching log level. Stdout is
+    deliberately left clean so the ranked CSV can be piped without corruption.
+    """
+    if msg.startswith("ERROR"):
+        _LOGGER.error(msg)
+    elif msg.startswith("WARN"):
+        _LOGGER.warning(msg)
+    else:
+        _LOGGER.info(msg)
 
 
 # ---------------------------------------------------------------------------
 # Artifact loading
 # ---------------------------------------------------------------------------
 
-def load_artifacts(artifacts_dir: str):
+def load_artifacts(
+    artifacts_dir: str,
+) -> Tuple[dict, "faiss.Index", List[str], Dict[str, int], str]:
     """Load manifest, FAISS index, id_map, and byte-offset index.
 
     Returns ``(manifest, faiss_index, id_map, byte_offsets, plain_jsonl_path)``.
@@ -186,7 +205,7 @@ def load_artifacts(artifacts_dir: str):
 # Pass 1 - recall (vectors + ids only)
 # ---------------------------------------------------------------------------
 
-def embed_query(jd_text: str, model_name: str):
+def embed_query(jd_text: str, model_name: str) -> "np.ndarray":
     """Embed the JD with the same fastembed model used in Phase 1, normalized.
 
     Air-gap lock (R5): if the caller engaged the air-gap (``run_ranker.py``'s
@@ -223,8 +242,8 @@ def embed_query(jd_text: str, model_name: str):
     return vec
 
 
-def recall_top_k(index, query_vec, id_map: List[str], k: int
-                 ) -> List[Tuple[str, float]]:
+def recall_top_k(index: "faiss.Index", query_vec: "np.ndarray",
+                 id_map: List[str], k: int) -> List[Tuple[str, float]]:
     """FAISS search -> list of (candidate_id, base_cosine_score), best first."""
     k = min(k, index.ntotal)
     scores, idxs = index.search(query_vec, k)
@@ -240,7 +259,8 @@ def recall_top_k(index, query_vec, id_map: List[str], k: int
 # Pass 2 - lazy metadata load (only the recall set, R1)
 # ---------------------------------------------------------------------------
 
-def load_record(plain_jsonl_path: str, fh, byte_offset: int) -> Optional[dict]:
+def load_record(plain_jsonl_path: str, fh: "IO[str]",
+                byte_offset: int) -> Optional[dict]:
     """Seek to ``byte_offset`` in the open file handle and parse one record."""
     fh.seek(byte_offset)
     line = fh.readline()
@@ -265,7 +285,7 @@ def _companies(record: dict) -> List[str]:
     return names
 
 
-def _parse_month_index(date_str) -> Optional[int]:
+def _parse_month_index(date_str: object) -> Optional[int]:
     """``YYYY-MM[-DD]`` -> integer month index (year*12 + month-1); else ``None``."""
     if not isinstance(date_str, str):
         return None
@@ -327,7 +347,7 @@ def _mean_tenure_years(record: dict) -> Optional[float]:
     return (sum(months) / len(months)) / 12.0
 
 
-def _title_denied(title) -> Optional[str]:
+def _title_denied(title: object) -> Optional[str]:
     """Return the off-domain term tripped by ``title`` (whole-word), else None.
 
     WHOLE-WORD only (boundary regex), matched against the current title string
@@ -467,10 +487,12 @@ class _RevId:
 
     __slots__ = ("s",)
 
-    def __init__(self, s: str):
+    def __init__(self, s: str) -> None:
+        """Store the candidate_id whose ordering is to be reversed."""
         self.s = s
 
     def __lt__(self, other: "_RevId") -> bool:
+        """Reverse ordering: a lexicographically larger id is treated as smaller."""
         return self.s > other.s
 
 
@@ -633,6 +655,7 @@ def load_jd_text(path: str) -> str:
 # ---------------------------------------------------------------------------
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
+    """Parse Phase-2 CLI arguments (artifacts dir, JD source, recall/output sizes)."""
     p = argparse.ArgumentParser(
         description="Phase 2 - two-pass FAISS recall + behavioral re-ranking.",
     )
@@ -650,6 +673,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 
 def main(argv: List[str]) -> int:
+    """Phase-2 CLI entrypoint: resolve the JD, rank, and write the CSV.
+
+    Returns a process exit code (0 on success; non-zero on a fail-loud error
+    such as a missing JD file or invalid sizes, per R10).
+    """
     args = parse_args(argv)
 
     if args.jd_file:
