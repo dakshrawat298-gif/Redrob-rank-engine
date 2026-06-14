@@ -1,0 +1,79 @@
+[SYSTEM COMMAND: GENERATE ENTERPRISE PITCH DECK FOR HACKATHON]
+
+ROLE: You are an elite Pitch Deck Designer and L9 Silicon Valley Architect. You are generating a 10-slide presentation for the "Redrob India.Runs Hackathon".
+
+DESIGN & THEME SPECIFICATIONS:
+Color Palette: Enterprise Dark Mode. Use deep navy/black backgrounds (like #0B0F19), vibrant neon purple/blue accents (like #6D28D9 or #3B82F6) for headers and highlights, and crisp white text.
+Typography: Clean, modern sans-serif (Inter, Roboto, or similar).
+Layout: Highly visual, minimalist, using bullet points. Zero text walls. 
+
+STRICT CONTENT TO RENDER (10 SLIDES):
+
+Slide 1: Title & Team
+Title: redrob-rank-engine
+Subtitle: Intelligent Candidate Discovery & Ranking (Track 1)
+Team: Daksh Rawat - Solo Founder, Architect & Engineer.
+Tagline: Built, coded, and deployed single-handedly from a Jio Cloud PC. Grit > Resources.
+
+Slide 2: Solution Overview
+Header: The 4.3-Second Recruiter
+Point 1: A CPU-only, two-pass ranker processing 100k candidates.
+Point 2: Pass 1 (Recall): FAISS semantic search pulls top 1,000 matches.
+Point 3: Pass 2 (Precision): Behavioral scoring, honeypot dropping, and ranking.
+Point 4: Fully offline, deterministic, and zero-hallucination.
+
+Slide 3: JD Understanding & Candidate Evaluation
+Header: Semantic Fit > Keyword Traps
+Point 1: Matches meaning via 384-dim embeddings (e.g., "retrieval" matches "search ranking").
+Point 2: Applies regex whole-word boundaries to prevent naive substring matches.
+Point 3: Enforces a strict TITLE_DENY_LIST to drop irrelevant roles instantly.
+
+Slide 4: Ranking Methodology
+Header: Math, Not Magic
+Point 1: Embed JD -> IndexFlatIP Cosine Similarity -> Base Score.
+Point 2: Final Score = Semantic Base * Behavioral Multipliers.
+Point 3: Job-hopper penalty (0.85x) calculated from actual career tenure.
+Point 4: Deterministic tie-breaking (Score -> Semantic -> Candidate_ID).
+
+Slide 5: Explainability & Data Validation
+Header: 100% Grounded Reasoning
+Point 1: Custom Abstract Syntax Tree (AST) templating engine.
+Point 2: Clauses only render if the data explicitly exists in the candidate's profile.
+Point 3: Honeypot logic traps overlapping timelines and experience inflation.
+Point 4: Drops are logged; surviving top 100 get unique, 240-char justifications.
+
+Slide 6: End-to-End Workflow
+Header: Offline to Runtime Pipeline
+Point 1: Offline: Stream 100k JSONL -> Build Byte-Offset Index -> Serialize FAISS.
+Point 2: Runtime: Parse JD -> Embed -> Recall Top 1k -> Lazy Load.
+Point 3: Runtime: Execute Hard Filters -> Apply Multipliers -> AST Reasoning.
+Point 4: Output: Write valid `team_vibecoder.csv`.
+
+Slide 7: System Architecture
+Header: Enterprise Pipeline
+Point 1: Embedding Layer: fastembed + ONNX Runtime (CPU).
+Point 2: Vector DB: FAISS for high-speed retrieval.
+Point 3: Rule Engine: Pure Python heuristics (No LLM black-boxes).
+Point 4: Validation: hashlib SHA-256 for byte-identical reproducibility.
+
+Slide 8: Benchmarking & Performance
+Header: Beating the Sandbox
+Point 1: Ranking wall-clock (100k candidates): ~4.3 seconds (Budget: 300s).
+Point 2: Peak RAM utilization: ~0.4 GB (Ceiling: 16 GB).
+Point 3: Quality: Monotonically decaying scores [1.0 to 0.537].
+Point 4: Zero GPU, zero network API calls during ranking.
+
+Slide 9: Technologies Used
+Header: The Arsenal
+Point 1: Core: Python, NumPy.
+Point 2: Retrieval: FAISS, all-MiniLM-L6-v2.
+Point 3: Engine: ONNX, fastembed.
+Point 4: UI/Delivery: Streamlit, GitHub.
+
+Slide 10: Access & Links
+Header: Ready for Stage 4 Code Review
+Point 1: Built by Daksh Rawat (Solo)
+Point 2: GitHub Repository: https://github.com/dakshrawat298-gif/Redrob-rank-engine.git
+Point 3: Architecture is locked, live, and reproducible.
+
+EXECUTE: Generate these exact slides with the requested dark enterprise styling.

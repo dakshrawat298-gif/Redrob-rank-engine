@@ -1,0 +1,82 @@
+[
+  {
+    "id": "c22112c7-1999-4211-9bf3-c0d6153a7e77",
+    "position": 1,
+    "filepath": "src/pages/slides/Title.tsx",
+    "title": "redrob-rank-engine",
+    "description": "Title slide with team and tagline",
+    "speakerNotes": ""
+  },
+  {
+    "id": "a3e804fd-01da-44c4-aa1b-8f16b77b2e9c",
+    "position": 2,
+    "filepath": "src/pages/slides/SolutionOverview.tsx",
+    "title": "The 4.3-Second Recruiter",
+    "description": "Solution overview and two-pass ranker",
+    "speakerNotes": ""
+  },
+  {
+    "id": "015f7a9c-29b4-40cd-8fb9-6b5bc7231d96",
+    "position": 3,
+    "filepath": "src/pages/slides/JdUnderstanding.tsx",
+    "title": "Semantic Fit > Keyword Traps",
+    "description": "JD understanding and evaluation",
+    "speakerNotes": ""
+  },
+  {
+    "id": "2b00f4fa-b37e-4e96-885a-fd2e666883cc",
+    "position": 4,
+    "filepath": "src/pages/slides/RankingMethodology.tsx",
+    "title": "Math, Not Magic",
+    "description": "Ranking methodology and scoring formula",
+    "speakerNotes": ""
+  },
+  {
+    "id": "ea8ffa06-0c68-4509-890e-8b68e84d42e9",
+    "position": 5,
+    "filepath": "src/pages/slides/Explainability.tsx",
+    "title": "100% Grounded Reasoning",
+    "description": "Explainability and anti-hallucination",
+    "speakerNotes": ""
+  },
+  {
+    "id": "88f349b3-0885-4418-98ab-d1f92b4b73f3",
+    "position": 6,
+    "filepath": "src/pages/slides/Workflow.tsx",
+    "title": "Offline to Runtime Pipeline",
+    "description": "End-to-end workflow stages",
+    "speakerNotes": ""
+  },
+  {
+    "id": "e3be50f3-2430-424b-8375-eca64560cd22",
+    "position": 7,
+    "filepath": "src/pages/slides/SystemArchitecture.tsx",
+    "title": "Enterprise Pipeline",
+    "description": "System architecture layers",
+    "speakerNotes": ""
+  },
+  {
+    "id": "8ab102cb-23cc-4bad-bac0-19ee1f5a37ef",
+    "position": 8,
+    "filepath": "src/pages/slides/Benchmarking.tsx",
+    "title": "Beating the Sandbox",
+    "description": "Performance benchmarks",
+    "speakerNotes": ""
+  },
+  {
+    "id": "02249da0-b197-40d1-83f3-acafe249472e",
+    "position": 9,
+    "filepath": "src/pages/slides/Technologies.tsx",
+    "title": "The Arsenal",
+    "description": "Technology stack",
+    "speakerNotes": ""
+  },
+  {
+    "id": "0261c54a-8a90-49a8-b19c-3bd0c3fe611d",
+    "position": 10,
+    "filepath": "src/pages/slides/AccessLinks.tsx",
+    "title": "Ready for Stage 4 Code Review",
+    "description": "Access, links, and closing",
+    "speakerNotes": ""
+  }
+]
