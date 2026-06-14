@@ -130,6 +130,4 @@ mode (single JD per run); retraining embedding models at runtime.
 - `AppFlow.md` — end-to-end data flow
 - `Design.md` — output CSV contract + logging interface
 - `Schema.md` — input record + 23 signals + honeypot criteria
-- `ImplementationPlan.md` — phased timeline
-- `Tracker.md` — Kanban board
 - `Rules.md` — unbreakable guardrails

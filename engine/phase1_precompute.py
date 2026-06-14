@@ -4,8 +4,7 @@
 This script turns the raw candidate dataset (``candidates.jsonl`` or
 ``candidates.jsonl.gz``) into the compact, query-ready disk artifacts that the
 ranking runtime consumes. It is the *offline* stage described in ``TechSpec.md``
-section 2 and ``ImplementationPlan.md`` Phase 1, and is NOT counted against the
-5-minute ranking budget.
+section 2, and is NOT counted against the 5-minute ranking budget.
 
 Embedding backend
 -----------------

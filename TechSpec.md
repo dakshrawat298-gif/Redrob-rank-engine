@@ -105,7 +105,7 @@ This is the concrete enforcement of `Rules.md` §R1 ("never load the whole JSONL
 ## 6. Scoring Math (Behavioral Multipliers)
 
 `final_score` is a bounded, transparent composite. All component weights live in one config
-block (see `ImplementationPlan.md` Phase 2) so they are tunable and auditable.
+block so they are tunable and auditable.
 
 ```
 base        = semantic_fit          # rescaled cosine from Pass 1, mapped to [0, 1]
@@ -161,8 +161,8 @@ nodes**:
 | CSV write | 100 rows | < 1 s | negligible |
 | **Total** | | **≈ < 90 s typical, hard cap 300 s** | **design target ≤ 4 GB** |
 
-Comfortable margin against both the 5-minute and 16GB ceilings. Phase 4 (`ImplementationPlan.md`)
-validates these numbers in a local sandbox.
+Comfortable margin against both the 5-minute and 16GB ceilings. The Phase 4 sandbox run
+validates these numbers locally.
 
 ---
 

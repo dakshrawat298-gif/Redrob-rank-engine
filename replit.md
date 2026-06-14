@@ -9,11 +9,9 @@ A CPU-only candidate ranking system (Redrob "India Runs" Hackathon — Track 1) 
 - `AppFlow.md` — end-to-end data flow
 - `Design.md` — output CSV contract + terminal logging
 - `Schema.md` — input record, the 23 `redrob_signals`, honeypot criteria
-- `ImplementationPlan.md` — phased delivery plan
-- `Tracker.md` — Kanban board
 - `Rules.md` — unbreakable guardrails (precedence over other docs)
 
-> Implementation (Python ranking code) is gated until the user approves the 8 docs above.
+> Implementation (Python ranking code) is gated until the user approves the docs above.
 
 ## Run & Operate
 
