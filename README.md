@@ -111,10 +111,9 @@ streamlit run app.py
 
 ---
 
-## Why We Win
+## System Guarantees & Core Architecture
 
-We solved candidate ranking with auditable math and logic. Every decision is a
-number you can trace; every sentence is a field you can verify.
+The ranking engine enforces decisions strictly through auditable mathematical bounds and deterministic logic. Every final score is a traceable numerical output; every reasoning sentence is a verifiable data field.
 
 - **Zero-hallucination reasoning (AST templating).** Reasons are built by a typed
   AST — `Lit` / `Field` / `Skills` leaves composed by `Seq` / `Choice`. A clause
