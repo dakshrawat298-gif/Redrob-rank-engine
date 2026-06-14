@@ -1,2 +1,0 @@
-- [CSV byte-identity gate](redrob-csv-byte-identity.md) — team_vibecoder.csv must stay byte-identical across non-behavioral refactors; how to prove it.
-- [Pitch-deck style override](pitch-deck-style.md) — Redrob pitch-deck intentionally uses neon purple/blue + Inter (user-specced); don't "fix" toward skill defaults.
